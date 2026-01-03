@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>GalleryLoom · Sources</title>
+</head>
+<body>
+  <header>
+    <h1>GalleryLoom Sources</h1>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/sources">Sources</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+  <main>
+    <section>
+      <h2>Add Source</h2>
+      <form id="sourceForm">
+        <div class="flex">
+          <div style="flex:1">
+            <label>Name</label>
+            <input type="text" id="name" required placeholder="My Manga"/>
+          </div>
+          <div style="flex:1">
+            <label>Relative Path under /data</label>
+            <input type="text" id="path" required placeholder="Manga/Series"/>
+          </div>
+        </div>
+        <div class="flex" style="margin-top:8px">
+          <div>
+            <label>Scan Mode</label>
+            <select id="scan_mode">
+              <option value="both">archives + folders</option>
+              <option value="archives_only">archives only</option>
+              <option value="folders_only">folders only</option>
+            </select>
+          </div>
+          <div style="align-self:flex-end">
+            <label><input type="checkbox" id="enabled" checked> Enabled</label>
+          </div>
+          <div style="flex:1"></div>
+          <button type="submit" class="secondary">Add Source</button>
+        </div>
+      </form>
+      <p class="muted">Paths are stored relative to /data mount. Example: <code>Manga/Series</code> -> /data/Manga/Series</p>
+    </section>
+
+    <section>
+      <h2>Existing Sources</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Path</th>
+              <th>Scan Mode</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sourcesBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("sourceForm");
+    const bodyEl = document.getElementById("sourcesBody");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById("name").value,
+        path: document.getElementById("path").value,
+        scan_mode: document.getElementById("scan_mode").value,
+        enabled: document.getElementById("enabled").checked
+      };
+      await fetch("/api/sources/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      form.reset();
+      document.getElementById("enabled").checked = true;
+      loadSources();
+    });
+
+    async function loadSources() {
+      const res = await fetch("/api/sources/");
+      const data = await res.json();
+      bodyEl.innerHTML = "";
+      data.forEach(src => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${src.name}</td>
+          <td>${src.path}</td>
+          <td>${src.scan_mode}</td>
+          <td>${src.enabled ? '<span class="pill">enabled</span>' : '<span class="muted">disabled</span>'}</td>
+          <td>
+            <button data-id="${src.id}" data-enabled="${src.enabled}" class="secondary toggle">${src.enabled ? 'Disable' : 'Enable'}</button>
+            <button data-id="${src.id}" class="danger delete">Delete</button>
+          </td>
+        `;
+        bodyEl.appendChild(tr);
+      });
+    }
+
+    bodyEl.addEventListener("click", async (e) => {
+      if (e.target.classList.contains("toggle")) {
+        const id = e.target.getAttribute("data-id");
+        const enabled = e.target.getAttribute("data-enabled") === "true";
+        await fetch(`/api/sources/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !enabled })
+        });
+        loadSources();
+      }
+      if (e.target.classList.contains("delete")) {
+        const id = e.target.getAttribute("data-id");
+        await fetch(`/api/sources/${id}`, { method: "DELETE" });
+        loadSources();
+      }
+    });
+
+    loadSources();
+  </script>
+</body>
+</html>

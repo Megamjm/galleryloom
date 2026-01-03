@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>GalleryLoom</Name>
+  <Repository>ghcr.io/yourorg/galleryloom:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/yourorg/galleryloom</Support>
+  <Project>https://github.com/yourorg/galleryloom</Project>
+  <Overview>
+    GalleryLoom: scan /data for archives and gallery folders, normalize into /output.
+    Required mounts: /data (read), /output (write), /config (write). Optional: /duplicates.
+    First-run defaults are controlled by environment variables; persisted settings live in /config.
+  </Overview>
+  <Category>MediaApp:Books</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/yourorg/unraid-templates/main/galleryloom.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/yourorg/galleryloom/main/unraid/icon.png</Icon>
+  <ExtraParams>--pull=always</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <!-- PORTS -->
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="GalleryLoom WebUI port" Type="Port" Display="always" Required="true" Mask="false"/>
+
+  <!-- REQUIRED PATHS -->
+  <Config Name="Data Root (Required)" Target="/data" Default="" Mode="rw" Description="Mount the root folder that contains import sources. Choose actual folders inside the WebUI (Sources). Example: /mnt/user/data" Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Output Library (Required)" Target="/output" Default="" Mode="rw" Description="Unified output library destination. Example: /mnt/user/galleryloom-output" Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Appdata (Required)" Target="/config" Default="/mnt/user/appdata/galleryloom" Mode="rw" Description="Persistent configuration + SQLite database + logs." Type="Path" Display="always" Required="true" Mask="false"/>
+
+  <!-- OPTIONAL PATHS -->
+  <Config Name="Duplicates Folder (Optional)" Target="/duplicates" Default="" Mode="rw" Description="Optional. Used only if enabled to store collision/duplicate outputs. Example: /mnt/user/galleryloom-duplicates" Type="Path" Display="always" Required="false" Mask="false"/>
+
+  <!-- OPTIONAL ENV DEFAULTS (first-run defaults; WebUI persists overrides in /config) -->
+  <Config Name="Archive Extensions" Target="GLOOM_ARCHIVE_EXTENSIONS" Default="zip,cbz" Mode="" Description="Comma-separated archive extensions." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Image Extensions" Target="GLOOM_IMAGE_EXTENSIONS" Default="jpg,jpeg,png,webp,gif,bmp,jfif" Mode="" Description="Comma-separated image extensions." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Zip Galleries" Target="GLOOM_ZIP_GALLERIES" Default="1" Mode="" Description="1=zip image folders into archives, 0=skip zipping." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Update Gallery Zips" Target="GLOOM_UPDATE_GALLERY_ZIPS" Default="0" Mode="" Description="1=replace output archive when source folder changes, 0=never replace." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Replicate Nesting" Target="GLOOM_REPLICATE_NESTING" Default="1" Mode="" Description="1=mirror /data folder structure under /output, 0=flatten output (lanraragi_flatten covers archives)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Leaf-only Mode" Target="GLOOM_LEAF_ONLY" Default="1" Mode="" Description="1=only zip/copy leaf folders with images, 0=allow parent galleries with >= min images." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Optional. User ID to chown created files/dirs (Unraid nobody=99)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Optional. Group ID to chown created files/dirs (Unraid users=100)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>

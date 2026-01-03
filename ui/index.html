@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>GalleryLoom · Dashboard</title>
+</head>
+<body>
+  <header>
+    <h1>GalleryLoom Dashboard</h1>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/sources">Sources</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+  <main>
+    <section>
+      <h2>Run Scan</h2>
+      <div class="flex">
+        <button id="dryRunBtn" class="secondary">Dry Run</button>
+        <button id="runBtn">Run Scan</button>
+        <button id="diffBtn" class="ghost">Diff</button>
+        <span id="jobStatus" class="muted"></span>
+      </div>
+      <p class="muted" style="margin-top:8px">Dry run previews planned work. Diff compares current sources vs DB without writing.</p>
+    </section>
+
+    <section>
+      <h2>Last Results</h2>
+      <div class="flex" style="gap:12px">
+        <label>View
+          <select id="viewSelect">
+            <option value="dryrun">Last Dry-run</option>
+            <option value="run">Last Run</option>
+          </select>
+        </label>
+        <label>Type
+          <select id="filterType"></select>
+        </label>
+        <label>Decision
+          <select id="filterDecision"></select>
+        </label>
+        <label>Reason
+          <select id="filterReason"></select>
+        </label>
+      </div>
+      <div id="summary" class="muted">Loading…</div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Decision</th>
+              <th>Action</th>
+              <th>Reason</th>
+              <th>Source</th>
+              <th>Target</th>
+              <th>Virtual</th>
+              <th>Bytes</th>
+              <th>Signature</th>
+            </tr>
+          </thead>
+          <tbody id="actionsBody">
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Diff View</h2>
+      <div id="diffSummary" class="muted">No diff yet.</div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Type</th>
+              <th>Target</th>
+              <th>Source</th>
+              <th>Virtual</th>
+              <th>Signature</th>
+            </tr>
+          </thead>
+          <tbody id="diffBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Activity Log</h2>
+      <div id="activity" class="log">Loading…</div>
+    </section>
+
+    <section>
+      <h2>App Logs</h2>
+      <div class="flex">
+        <label>Log type
+          <select id="logLevel">
+            <option value="info">Base</option>
+            <option value="debug">Debug</option>
+          </select>
+        </label>
+        <label>Lines
+          <input type="number" id="logLines" value="200" min="10" max="1000" style="width:110px">
+        </label>
+        <button id="loadLogsBtn" class="secondary">Load Logs</button>
+      </div>
+      <pre id="logsView" class="log" style="white-space:pre-wrap;margin-top:10px;">Loading…</pre>
+    </section>
+  </main>
+
+  <script>
+    const dryRunBtn = document.getElementById("dryRunBtn");
+    const runBtn = document.getElementById("runBtn");
+    const diffBtn = document.getElementById("diffBtn");
+    const viewSelect = document.getElementById("viewSelect");
+    const filterType = document.getElementById("filterType");
+    const filterDecision = document.getElementById("filterDecision");
+    const filterReason = document.getElementById("filterReason");
+    const actionsBody = document.getElementById("actionsBody");
+    const summaryEl = document.getElementById("summary");
+    const activityEl = document.getElementById("activity");
+    const jobStatusEl = document.getElementById("jobStatus");
+    const diffSummaryEl = document.getElementById("diffSummary");
+    const diffBody = document.getElementById("diffBody");
+    const logLevelSel = document.getElementById("logLevel");
+    const logLinesInput = document.getElementById("logLines");
+    const loadLogsBtn = document.getElementById("loadLogsBtn");
+    const logsView = document.getElementById("logsView");
+    let pollHandle = null;
+    let lastResults = { dryrun: null, run: null };
+    let diffResults = null;
+
+    dryRunBtn.addEventListener("click", async () => {
+      dryRunBtn.disabled = true;
+      summaryEl.textContent = "Running dry scan…";
+      actionsBody.innerHTML = "";
+      try {
+        const res = await fetch("/api/scan/dryrun", { method: "POST" });
+        const data = await res.json();
+        lastResults.dryrun = data;
+        viewSelect.value = "dryrun";
+        renderActions();
+      } catch (err) {
+        summaryEl.textContent = "Dry run failed: " + err;
+      } finally {
+        dryRunBtn.disabled = false;
+        loadActivity();
+      }
+    });
+
+    runBtn.addEventListener("click", async () => {
+      runBtn.disabled = true;
+      jobStatusEl.textContent = "Enqueuing scan…";
+      try {
+        const res = await fetch("/api/scan/run", { method: "POST" });
+        const data = await res.json();
+        jobStatusEl.textContent = "Job " + data.job_id + " queued";
+        if (pollHandle) clearInterval(pollHandle);
+        pollHandle = setInterval(() => checkJob(data.job_id), 1500);
+      } catch (err) {
+        jobStatusEl.textContent = "Failed to enqueue: " + err;
+        runBtn.disabled = false;
+      }
+    });
+
+    diffBtn.addEventListener("click", async () => {
+      diffBtn.disabled = true;
+      diffSummaryEl.textContent = "Computing diff…";
+      diffBody.innerHTML = "";
+      try {
+        const res = await fetch("/api/scan/diff", { method: "POST" });
+        diffResults = await res.json();
+        renderDiff();
+      } catch (err) {
+        diffSummaryEl.textContent = "Diff failed: " + err;
+      } finally {
+        diffBtn.disabled = false;
+      }
+    });
+
+    viewSelect.addEventListener("change", renderActions);
+    filterType.addEventListener("change", renderActions);
+    filterDecision.addEventListener("change", renderActions);
+    filterReason.addEventListener("change", renderActions);
+    loadLogsBtn.addEventListener("click", loadLogs);
+
+    async function checkJob(jobId) {
+      const res = await fetch(`/api/scan/jobs/${jobId}`);
+      const data = await res.json();
+      jobStatusEl.textContent = `Job ${jobId}: ${data.status}`;
+      if (data.status === "done" || data.status === "failed" || data.status === "unknown") {
+        clearInterval(pollHandle);
+        runBtn.disabled = false;
+        loadActivity();
+        await loadLastResults();
+      }
+    }
+
+    function buildSummary(summary) {
+      if (!summary) return "No data";
+      const reasons = summary.reason_counts || {};
+      const reasonText = Object.keys(reasons).length
+        ? "Reasons: " + Object.entries(reasons).map(([k, v]) => `${k}=${v}`).join(", ")
+        : "Reasons: none";
+      return `Planned: ${summary.planned || 0} · Skipped: ${summary.skipped || 0} · Archives: ${summary.archives_to_copy || 0} · Galleries: ${summary.galleries_to_zip || 0} · Overwrites: ${summary.overwrites || 0} · Duplicates: ${summary.duplicates || 0} · ${reasonText}`;
+    }
+
+    function setFilterOptions(select, values) {
+      const unique = Array.from(new Set(values.filter(Boolean))).sort();
+      select.innerHTML = ['<option value="">All</option>', ...unique.map(v => `<option value="${v}">${v}</option>`)].join("");
+    }
+
+    function renderActions() {
+      const view = viewSelect.value;
+      const data = lastResults[view];
+      if (!data) {
+        summaryEl.textContent = `No ${view} data yet.`;
+        actionsBody.innerHTML = "";
+        setFilterOptions(filterType, []);
+        setFilterOptions(filterDecision, []);
+        setFilterOptions(filterReason, []);
+        return;
+      }
+      const actions = data.actions || [];
+      setFilterOptions(filterType, actions.map(a => a.type || a.action));
+      setFilterOptions(filterDecision, actions.map(a => a.decision || ""));
+      setFilterOptions(filterReason, actions.map(a => a.reason_code || a.reason || ""));
+
+      const typeVal = filterType.value;
+      const decisionVal = filterDecision.value;
+      const reasonVal = filterReason.value;
+      const filtered = actions.filter(a => {
+        const reason = a.reason_code || a.reason || "";
+        return (!typeVal || a.type === typeVal || a.action === typeVal) &&
+          (!decisionVal || a.decision === decisionVal) &&
+          (!reasonVal || reason === reasonVal);
+      });
+
+      summaryEl.textContent = buildSummary(data.summary);
+      actionsBody.innerHTML = "";
+      filtered.forEach(act => {
+        const reason = act.reason_code || act.reason || "";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${act.type || act.action || ""}</td>
+          <td>${act.decision || ""}</td>
+          <td>${act.action || ""}</td>
+          <td>${reason}</td>
+          <td class="muted">${act.source_path || ""}</td>
+          <td>${act.target_path || ""}</td>
+          <td class="muted">${act.virtual_target || ""}</td>
+          <td>${act.bytes != null ? act.bytes.toLocaleString() : ""}</td>
+          <td class="muted">${act.signature ? JSON.stringify(act.signature) : ""}</td>
+        `;
+        actionsBody.appendChild(tr);
+      });
+    }
+
+    function renderDiff() {
+      if (!diffResults) {
+        diffSummaryEl.textContent = "No diff yet.";
+        diffBody.innerHTML = "";
+        return;
+      }
+      const counts = ["new", "changed", "missing", "unchanged"].map(key => `${key}: ${(diffResults[key] || []).length}`).join(" · ");
+      diffSummaryEl.textContent = counts;
+      diffBody.innerHTML = "";
+      ["new", "changed", "missing", "unchanged"].forEach(status => {
+        (diffResults[status] || []).forEach(item => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${status}</td>
+            <td>${item.type}</td>
+            <td>${item.target_path}</td>
+            <td class="muted">${item.source_path || ""}</td>
+            <td class="muted">${item.virtual_target_path || ""}</td>
+            <td class="muted">${item.signature ? JSON.stringify(item.signature) : ""}</td>
+          `;
+          diffBody.appendChild(tr);
+        });
+      });
+    }
+
+    async function loadActivity() {
+      const res = await fetch("/api/activity?limit=50");
+      const data = await res.json();
+      activityEl.innerHTML = data.map(item => {
+        let payload = item.payload_json;
+        try {
+          payload = JSON.stringify(JSON.parse(item.payload_json));
+        } catch (e) {}
+        return `[${item.level}] ${item.ts} · ${item.message} :: ${payload}`;
+      }).join("<br>");
+    }
+
+    async function loadLogs() {
+      logsView.textContent = "Loading logs…";
+      const level = logLevelSel.value;
+      const lines = parseInt(logLinesInput.value || "200", 10);
+      const res = await fetch(`/api/logs?level=${encodeURIComponent(level)}&lines=${lines}`);
+      const data = await res.json();
+      if (!data.exists) {
+        logsView.textContent = `No ${level} log file yet.`;
+        return;
+      }
+      logsView.textContent = data.lines.join("\n");
+    }
+
+    async function loadLastResults() {
+      const res = await fetch("/api/scan/last");
+      lastResults = await res.json();
+      renderActions();
+    }
+
+    loadLastResults();
+    loadActivity();
+    loadLogs();
+  </script>
+</body>
+</html>

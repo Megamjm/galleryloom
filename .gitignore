@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+dev-config/
+dev-output/
+dev-duplicates/
+dev-data/

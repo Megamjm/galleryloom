@@ -1,0 +1,13 @@
+services:
+  galleryloom:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./dev-config:/config
+      - ./dev-data:/data
+      - ./dev-output:/output
+      - ./dev-duplicates:/duplicates

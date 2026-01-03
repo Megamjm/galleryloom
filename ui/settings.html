@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>GalleryLoom · Settings</title>
+</head>
+<body>
+  <header>
+    <h1>GalleryLoom Settings</h1>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/sources">Sources</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+  <main>
+    <section>
+      <h2>Scan Settings</h2>
+      <form id="settingsForm">
+        <div class="flex">
+          <label><input type="checkbox" id="zip_galleries"> Zip qualifying galleries</label>
+          <label><input type="checkbox" id="update_gallery_zips"> Update gallery zips when changed</label>
+          <label><input type="checkbox" id="replicate_nesting"> Replicate nesting</label>
+          <label><input type="checkbox" id="leaf_only"> Leaf folders only</label>
+          <label><input type="checkbox" id="consider_images_in_subfolders"> Count images in subfolders</label>
+          <label><input type="checkbox" id="copy_sidecars"> Copy sidecars (.txt/.json/.xml/.nfo)</label>
+          <label><input type="checkbox" id="duplicates_enabled"> Write duplicates to alt path</label>
+          <label><input type="checkbox" id="lanraragi_flatten"> LANraragi flatten archives</label>
+          <label><input type="checkbox" id="debug_logging"> Enable debug logging</label>
+          <label><input type="checkbox" id="auto_scan_enabled"> Auto-scan (watch & interval)</label>
+        </div>
+        <div class="flex" style="margin-top:10px">
+          <div style="flex:1">
+            <label>Min images to qualify</label>
+            <input type="number" id="min_images_to_be_gallery" min="1" value="3">
+          </div>
+          <div style="flex:1">
+            <label>Archive extensions (comma separated)</label>
+            <input type="text" id="archive_extensions" placeholder="zip,cbz">
+          </div>
+          <div style="flex:1">
+            <label>Image extensions (comma separated)</label>
+            <input type="text" id="image_extensions" placeholder="jpg,jpeg,png,webp,gif,bmp">
+          </div>
+          <div style="flex:1">
+            <label>Output mode</label>
+            <select id="output_mode">
+              <option value="zip">zip</option>
+              <option value="foldercopy">foldercopy</option>
+              <option value="zip+foldercopy">zip + foldercopy</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label>Archive extension for galleries</label>
+            <select id="archive_extension_for_galleries">
+              <option value="zip">zip</option>
+              <option value="cbz">cbz</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label>Auto-scan interval (minutes)</label>
+            <input type="number" id="auto_scan_interval_minutes" min="1" value="30">
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <button type="submit" class="secondary">Save Settings</button>
+          <span id="savedMsg" class="muted" style="margin-left:10px"></span>
+        </div>
+      </form>
+      <p class="muted" style="margin-top:10px">Settings are persisted in /config/galleryloom.db. Update policy controls whether existing zips are rebuilt when content changes.</p>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("settingsForm");
+    const savedMsg = document.getElementById("savedMsg");
+
+    async function loadSettings() {
+      const res = await fetch("/api/settings/");
+      const data = await res.json();
+      document.getElementById("zip_galleries").checked = data.zip_galleries;
+      document.getElementById("update_gallery_zips").checked = data.update_gallery_zips;
+      document.getElementById("replicate_nesting").checked = data.replicate_nesting;
+      document.getElementById("leaf_only").checked = data.leaf_only;
+      document.getElementById("consider_images_in_subfolders").checked = data.consider_images_in_subfolders;
+      document.getElementById("copy_sidecars").checked = data.copy_sidecars;
+      document.getElementById("duplicates_enabled").checked = data.duplicates_enabled;
+      document.getElementById("lanraragi_flatten").checked = data.lanraragi_flatten;
+      document.getElementById("debug_logging").checked = data.debug_logging;
+      document.getElementById("auto_scan_enabled").checked = data.auto_scan_enabled;
+      document.getElementById("auto_scan_interval_minutes").value = data.auto_scan_interval_minutes;
+      document.getElementById("min_images_to_be_gallery").value = data.min_images_to_be_gallery;
+      document.getElementById("archive_extensions").value = (data.archive_extensions || []).join(",");
+      document.getElementById("image_extensions").value = (data.image_extensions || []).join(",");
+      document.getElementById("output_mode").value = data.output_mode;
+      document.getElementById("archive_extension_for_galleries").value = data.archive_extension_for_galleries;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const payload = {
+        zip_galleries: document.getElementById("zip_galleries").checked,
+        update_gallery_zips: document.getElementById("update_gallery_zips").checked,
+        replicate_nesting: document.getElementById("replicate_nesting").checked,
+        leaf_only: document.getElementById("leaf_only").checked,
+        consider_images_in_subfolders: document.getElementById("consider_images_in_subfolders").checked,
+        copy_sidecars: document.getElementById("copy_sidecars").checked,
+        duplicates_enabled: document.getElementById("duplicates_enabled").checked,
+        lanraragi_flatten: document.getElementById("lanraragi_flatten").checked,
+        debug_logging: document.getElementById("debug_logging").checked,
+        auto_scan_enabled: document.getElementById("auto_scan_enabled").checked,
+        auto_scan_interval_minutes: parseInt(document.getElementById("auto_scan_interval_minutes").value, 10),
+        output_mode: document.getElementById("output_mode").value,
+        archive_extension_for_galleries: document.getElementById("archive_extension_for_galleries").value,
+        min_images_to_be_gallery: parseInt(document.getElementById("min_images_to_be_gallery").value, 10),
+        archive_extensions: document.getElementById("archive_extensions").value.split(",").map(s => s.trim()).filter(Boolean),
+        image_extensions: document.getElementById("image_extensions").value.split(",").map(s => s.trim()).filter(Boolean),
+      };
+      await fetch("/api/settings/", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      savedMsg.textContent = "Saved ✔";
+      setTimeout(() => savedMsg.textContent = "", 2000);
+    });
+
+    loadSettings();
+  </script>
+</body>
+</html>
