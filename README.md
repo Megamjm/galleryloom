@@ -4,6 +4,7 @@ A minimal FastAPI + SQLite MVP that scans mounted media under `/data`, copies ar
 
 ## Features
 - Sources: name + relative path under `/data`, enabled flag, scan modes (`both | archives_only | folders_only`); signatures stored for change detection.
+- Source browser: click-to-browse modal lists allowed roots (default `/data`, `/output`) and fills the source path without copy/paste.
 - Planner: zip/foldercopy/zip+foldercopy output modes; leaf-only and/or recursive counting; nested replication or LANraragi flatten with collision-safe naming.
 - Skip/decision reasons: `SKIP_NO_IMAGES`, `SKIP_BELOW_MIN_IMAGES`, `SKIP_DUPLICATE_SAME_SIGNATURE`, `SKIP_DUPLICATE_SAME_SIZE`, `SKIP_OUTPUT_CONFLICT`, `SKIP_EXISTING_UNCHANGED`.
 - Duplicate handling: optional `/duplicates` sink or automatic rename with timestamp; signatures used to avoid rework; existing size/signature checks.
@@ -76,6 +77,11 @@ Visit the UI at `/`, `/sources`, `/settings`. API examples:
 - `curl http://localhost:8080/api/system`
 - `curl -X POST http://localhost:8080/api/scan/diff`
 
+## Configuration notes
+- Optional zip temp override: set `GLOOM_TEMP_DIR` if you want scratch space on a specific filesystem; otherwise the app writes zips in the destination directory first and falls back to `GLOOM_TMP_ROOT`.
+- Allowed browse roots for the folder picker/API are set with `GLOOM_BROWSE_ROOTS` (JSON array, e.g. `["/data","/output"]`); defaults to data + output roots.
+- List-style env vars must be JSON arrays (examples: `GLOOM_ARCHIVE_EXTENSIONS='["zip","cbz"]'`, `GLOOM_IMAGE_EXTENSIONS='["jpg","png"]'`).
+
 ## LANraragi compatibility
 - `lanraragi_flatten=true` places archives at the `/output` root while tracking their virtual nested paths in the DB (collisions append `__{hash}`).
 - `archive_extension_for_galleries` can be set to `cbz` while still producing ZIP-format archives.
@@ -126,7 +132,7 @@ Resulting output structure (after the run): `dev-output/Manga/SeriesA/Chapter1.z
 
 ## Behavior notes
 - No writes ever occur under `/data`. Output/duplicates/config dirs are created at startup.
-- Zips are built to `/config/tmp` and atomically moved into place.
+- Zips are written in the destination folder when possible for atomic replace; if a cross-device move is required, the writer falls back to `GLOOM_TMP_ROOT`/`GLOOM_TEMP_DIR` with a copy+replace that cleans up partial files.
 - Duplicate handling: same-size dest skips; otherwise copies to `/duplicates` when mounted/enabled or renames with `_DUP_{timestamp}` in `/output`.
 - Signatures (image count, bytes, newest mtime) are stored for gallery zips to decide overwrites when `update_gallery_zips` is enabled.
 - Activity log is queryable via `/api/activity` and printed to stdout.
@@ -140,5 +146,6 @@ python scripts/self_test.py
 ```
 
 ## Changelog
-- 0.2.0: Unraid-ready paths + PUID/PGID, rotating logs, system endpoint, diff API/UI, LANraragi flatten + cbz option, foldercopy output mode, improved skip reasons, self-test harness.
+- 0.2.2: EXDEV-safe zip finalization (temp-in-target, copy+replace fallback), folder picker UI backed by `/api/fs`, optional `GLOOM_TEMP_DIR` + `GLOOM_BROWSE_ROOTS` envs, tests for write safety.
 - 0.2.1: Added auto-scan watcher + interval controls, expanded docs for Unraid GUI/CLI install, debug logging notes.
+- 0.2.0: Unraid-ready paths + PUID/PGID, rotating logs, system endpoint, diff API/UI, LANraragi flatten + cbz option, foldercopy output mode, improved skip reasons, self-test harness.

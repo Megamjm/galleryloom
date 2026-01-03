@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     config_root: str = Field("/config")
     duplicates_root: str = Field("/duplicates")
     tmp_root: str = Field("/config/tmp")
+    temp_dir: Optional[str] = Field(default=None)
+    allowed_browse_roots: List[str] = Field(default_factory=list, validation_alias=AliasChoices("BROWSE_ROOTS", "ALLOWED_BROWSE_ROOTS"))
 
     # permissions / ownership
     puid: Optional[int] = Field(default=None, validation_alias=AliasChoices("PUID", "GLOOM_PUID"))
@@ -38,7 +40,14 @@ class Settings(BaseSettings):
     auto_scan_enabled: bool = True
     auto_scan_interval_minutes: int = 30
 
+    def model_post_init(self, __context):
+        if not self.allowed_browse_roots:
+            roots = [self.data_root]
+            if self.output_root not in roots:
+                roots.append(self.output_root)
+            object.__setattr__(self, "allowed_browse_roots", roots)
 
-APP_VERSION = "0.2.0"
+
+APP_VERSION = "0.2.2"
 
 settings = Settings()

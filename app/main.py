@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes_activity import router as activity_router
+from app.api.routes_fs import router as fs_router
 from app.api.routes_health import router as health_router
 from app.api.routes_logs import router as logs_router
 from app.api.routes_scan import router as scan_router
@@ -58,6 +59,10 @@ async def startup():
         Path(env_settings.tmp_root),
         Path(env_settings.output_root),
     ]
+    if env_settings.temp_dir:
+        temp_override = Path(env_settings.temp_dir)
+        if temp_override not in created_paths:
+            created_paths.append(temp_override)
     for path in created_paths:
         _ensure_dir(path)
         _chown_if_requested(path)
@@ -99,3 +104,4 @@ app.include_router(settings_router, prefix="/api")
 app.include_router(system_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 app.include_router(health_router, prefix="/api")
+app.include_router(fs_router, prefix="/api")

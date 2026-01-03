@@ -165,3 +165,83 @@ th {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 13px;
 }
+
+.input-with-button {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.input-with-button input {
+  flex: 1;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 17, 23, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 12px;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  width: min(760px, 100%);
+  max-height: 80vh;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modal-body {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-footer {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dir-list {
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  background: #0d1117;
+  overflow: auto;
+  max-height: 360px;
+}
+
+.dir-row {
+  padding: 10px 12px;
+  border-bottom: 1px solid #30363d;
+  cursor: pointer;
+}
+
+.dir-row:hover {
+  background: #161b22;
+}
+
+.dir-row:last-child {
+  border-bottom: none;
+}

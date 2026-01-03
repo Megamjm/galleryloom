@@ -1,9 +1,11 @@
+import errno
 import hashlib
 import logging
 import json
 import os
 import shutil
 import time
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -122,21 +124,84 @@ def _copy_file(src: Path, dest: Path):
         raise
 
 
-def _write_zip(source_dir: Path, image_files: List[Path], target_zip: Path):
+def _safe_unlink(path: Path):
     try:
-        tmp_dir = Path(env_settings.tmp_root)
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp_zip = tmp_dir / f"{target_zip.stem}_{int(time.time())}.zip"
-        with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except Exception:
+        logger.debug("Failed to remove temp file %s", path, exc_info=True)
+
+
+def _fsync_path(path: Path):
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        logger.debug("fsync skipped for %s", path, exc_info=True)
+
+
+def _create_temp_zip_path(target_zip: Path) -> tuple[Path, bool]:
+    target_dir = target_zip.parent
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            delete=False,
+            dir=target_dir,
+            prefix=f"{target_zip.stem}_",
+            suffix=".zip.tmp",
+        )
+        handle.close()
+        return Path(handle.name), True
+    except Exception:
+        logger.debug("Unable to create temp in target dir for %s, falling back to tmp root", target_zip, exc_info=True)
+    tmp_root = Path(env_settings.temp_dir or env_settings.tmp_root)
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        delete=False,
+        dir=tmp_root,
+        prefix=f"{target_zip.stem}_",
+        suffix=".zip.tmp",
+    )
+    handle.close()
+    return Path(handle.name), False
+
+
+def _write_zip(source_dir: Path, image_files: List[Path], target_zip: Path):
+    temp_zip: Path | None = None
+    partial_path: Path | None = None
+    try:
+        temp_zip, _ = _create_temp_zip_path(target_zip)
+        with zipfile.ZipFile(temp_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for file in image_files:
                 arcname = file.relative_to(source_dir) if file.is_relative_to(source_dir) else file.name
                 zf.write(file, arcname=str(arcname))
         target_zip.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(tmp_zip, target_zip)
-        logger.debug("Wrote zip %s from %s files (%s)", target_zip, len(image_files), source_dir)
+        _fsync_path(temp_zip)
+        try:
+            os.replace(temp_zip, target_zip)
+            logger.debug("Wrote zip %s from %s files (%s)", target_zip, len(image_files), source_dir)
+            return
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+        partial_path = target_zip.with_suffix(f"{target_zip.suffix}.partial")
+        _safe_unlink(partial_path)
+        shutil.copy2(temp_zip, partial_path)
+        _fsync_path(partial_path)
+        os.replace(partial_path, target_zip)
+        logger.debug("Wrote zip %s with cross-device fallback (%s)", target_zip, temp_zip.parent)
     except Exception:
         logger.debug("Zip write failed for %s", target_zip, exc_info=True)
         raise
+    finally:
+        if temp_zip:
+            _safe_unlink(temp_zip)
+        if partial_path:
+            _safe_unlink(partial_path)
 
 
 def _gather_gallery_files(path: Path, image_exts: Iterable[str], recursive: bool) -> List[Path]:

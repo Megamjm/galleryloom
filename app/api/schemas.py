@@ -115,6 +115,8 @@ class SystemInfo(BaseModel):
     config_root: str
     duplicates_root: str
     tmp_root: str
+    temp_dir: Optional[str] = None
+    browse_roots: List[str]
     puid: Optional[int] = None
     pgid: Optional[int] = None
     duplicates_enabled: bool
@@ -144,3 +146,21 @@ class DiffResult(BaseModel):
 class LastScans(BaseModel):
     dryrun: Optional[ScanResult] = None
     run: Optional[ScanResult] = None
+
+
+class FsRoot(BaseModel):
+    path: str
+    available: bool
+
+
+class FsDir(BaseModel):
+    name: str
+    path: str
+
+
+class FsList(BaseModel):
+    root: str
+    path: str
+    abs: str
+    dirs: List[FsDir]
+    truncated: bool = False

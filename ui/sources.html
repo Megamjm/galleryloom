@@ -26,7 +26,10 @@
           </div>
           <div style="flex:1">
             <label>Relative Path under /data</label>
-            <input type="text" id="path" required placeholder="Manga/Series"/>
+            <div class="input-with-button">
+              <input type="text" id="path" required placeholder="Manga/Series"/>
+              <button type="button" class="ghost" id="browseBtn">Browse</button>
+            </div>
           </div>
         </div>
         <div class="flex" style="margin-top:8px">
@@ -45,7 +48,7 @@
           <button type="submit" class="secondary">Add Source</button>
         </div>
       </form>
-      <p class="muted">Paths are stored relative to /data mount. Example: <code>Manga/Series</code> -> /data/Manga/Series</p>
+      <p class="muted">Paths are stored relative to your data root. Use <strong>Browse</strong> to pick a folder under the allowed roots (default: /data).</p>
     </section>
 
     <section>
@@ -67,18 +70,69 @@
     </section>
   </main>
 
+  <div id="browseModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <strong>Browse folders</strong>
+          <div class="muted" style="font-size:12px">Stay within configured roots (default /data)</div>
+        </div>
+        <button type="button" class="ghost" id="closeBrowse">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="flex">
+          <div style="flex:1">
+            <label>Root</label>
+            <select id="browseRoot"></select>
+          </div>
+          <div style="align-self:flex-end">
+            <button type="button" class="ghost" id="browseUp">Up</button>
+          </div>
+        </div>
+        <div class="muted" id="currentPath"></div>
+        <div class="dir-list" id="dirList"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="secondary" id="useSelection">Use This Folder</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const form = document.getElementById("sourceForm");
     const bodyEl = document.getElementById("sourcesBody");
+    const pathInput = document.getElementById("path");
+    const browseBtn = document.getElementById("browseBtn");
+    const browseModal = document.getElementById("browseModal");
+    const closeBrowse = document.getElementById("closeBrowse");
+    const browseRoot = document.getElementById("browseRoot");
+    const dirList = document.getElementById("dirList");
+    const currentPath = document.getElementById("currentPath");
+    const browseUp = document.getElementById("browseUp");
+    const useSelection = document.getElementById("useSelection");
+
+    const browseState = { root: null, path: "" };
+
+    const cleanPath = (value) => {
+      let cleaned = value || "";
+      while (cleaned.startsWith("/")) {
+        cleaned = cleaned.slice(1);
+      }
+      return cleaned.trim();
+    };
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      pathInput.value = cleanPath(pathInput.value);
       const payload = {
-        name: document.getElementById("name").value,
-        path: document.getElementById("path").value,
+        name: document.getElementById("name").value.trim(),
+        path: pathInput.value,
         scan_mode: document.getElementById("scan_mode").value,
         enabled: document.getElementById("enabled").checked
       };
+      if (!payload.name || !payload.path) {
+        return;
+      }
       await fetch("/api/sources/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -125,6 +179,117 @@
         await fetch(`/api/sources/${id}`, { method: "DELETE" });
         loadSources();
       }
+    });
+
+    async function loadRoots() {
+      const res = await fetch("/api/fs/roots");
+      const data = await res.json();
+      browseRoot.innerHTML = "";
+      const available = data.filter(r => r.available);
+      if (!available.length) {
+        dirList.innerHTML = '<div class="muted" style="padding:10px;">No browseable roots configured</div>';
+        browseState.root = null;
+        useSelection.disabled = true;
+        return [];
+      }
+      available.forEach(root => {
+        const opt = document.createElement("option");
+        opt.value = root.path;
+        opt.textContent = root.path;
+        browseRoot.appendChild(opt);
+      });
+      if (!browseState.root || !available.find(r => r.path === browseState.root)) {
+        browseState.root = available[0].path;
+      }
+      browseRoot.value = browseState.root;
+      useSelection.disabled = false;
+      return available;
+    }
+
+    function renderDirList(dirs, truncated) {
+      dirList.innerHTML = "";
+      if (!dirs.length) {
+        dirList.innerHTML = '<div class="muted" style="padding:10px;">No subdirectories in this folder</div>';
+        return;
+      }
+      dirs.forEach(dir => {
+        const row = document.createElement("div");
+        row.className = "dir-row";
+        row.textContent = dir.name;
+        row.addEventListener("click", () => loadDir(dir.path));
+        dirList.appendChild(row);
+      });
+      if (truncated) {
+        const note = document.createElement("div");
+        note.className = "muted";
+        note.style.padding = "8px 12px";
+        note.textContent = "Showing first 500 directories";
+        dirList.appendChild(note);
+      }
+    }
+
+    async function loadDir(pathOverride) {
+      if (pathOverride !== undefined && pathOverride !== null) {
+        browseState.path = cleanPath(pathOverride);
+      }
+      if (!browseState.root) {
+        const roots = await loadRoots();
+        if (!roots.length) {
+          return;
+        }
+      }
+      const params = new URLSearchParams({ root: browseState.root, path: browseState.path || "" });
+      const res = await fetch(`/api/fs/list?${params.toString()}`);
+      if (!res.ok) {
+        dirList.innerHTML = '<div class="muted" style="padding:10px;">Unable to browse this location</div>';
+        return;
+      }
+      const data = await res.json();
+      browseState.path = data.path;
+      currentPath.textContent = data.path ? `${browseState.root}/${data.path}` : browseState.root;
+      renderDirList(data.dirs, data.truncated);
+    }
+
+    async function openBrowse() {
+      browseState.path = cleanPath(pathInput.value);
+      browseModal.classList.remove("hidden");
+      await loadRoots();
+      await loadDir(browseState.path);
+    }
+
+    function closeModal() {
+      browseModal.classList.add("hidden");
+    }
+
+    browseBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      openBrowse();
+    });
+
+    closeBrowse.addEventListener("click", closeModal);
+    browseModal.addEventListener("click", (e) => {
+      if (e.target === browseModal) {
+        closeModal();
+      }
+    });
+
+    browseRoot.addEventListener("change", () => {
+      browseState.root = browseRoot.value;
+      browseState.path = "";
+      loadDir("");
+    });
+
+    browseUp.addEventListener("click", () => {
+      if (!browseState.path) return;
+      const parts = browseState.path.split("/").filter(Boolean);
+      parts.pop();
+      browseState.path = parts.join("/");
+      loadDir(browseState.path);
+    });
+
+    useSelection.addEventListener("click", () => {
+      pathInput.value = browseState.path;
+      closeModal();
     });
 
     loadSources();
