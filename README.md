@@ -3,12 +3,13 @@
 A minimal FastAPI + SQLite MVP that scans mounted media under `/data`, copies archives, and zips (or folder-copies) qualifying gallery folders into `/output` while logging activity to `/config/galleryloom.db`. Optional duplicates land in `/duplicates`. A simple web UI covers sources, settings, dry-run, run, diff, and activity.
 
 ## Features
-- Sources: name + relative path under `/data`, enabled flag, scan modes (`both | archives_only | folders_only`).
-- Settings: zip toggles, update policy, nesting replication, leaf-only mode, optional subfolder counting, output modes (`zip | foldercopy | zip+foldercopy`), sidecar copying, LANraragi flattening, min images, configurable archive/image extensions, duplicate handling.
-- Auto-scan: optional background watcher + interval (default 30 minutes) that triggers scans when sources change or the timer fires.
-- Dry run vs run: dry run returns a plan; run executes in a background worker thread and logs to DB + stdout + `/config/logs/galleryloom.log` (rotating).
-- Gallery zips include only qualifying images (optionally recursive); foldercopy mode copies images (and optional sidecars). Existing outputs honor the update policy and signatures (image count + bytes + newest mtime).
-- Diff view: `/api/scan/diff` compares current scan vs DB. `/api/scan/last` returns last dry-run/run details. `/api/system` reports resolved paths and disk info.
+- Sources: name + relative path under `/data`, enabled flag, scan modes (`both | archives_only | folders_only`); signatures stored for change detection.
+- Planner: zip/foldercopy/zip+foldercopy output modes; leaf-only and/or recursive counting; nested replication or LANraragi flatten with collision-safe naming.
+- Skip/decision reasons: `SKIP_NO_IMAGES`, `SKIP_BELOW_MIN_IMAGES`, `SKIP_DUPLICATE_SAME_SIGNATURE`, `SKIP_DUPLICATE_SAME_SIZE`, `SKIP_OUTPUT_CONFLICT`, `SKIP_EXISTING_UNCHANGED`.
+- Duplicate handling: optional `/duplicates` sink or automatic rename with timestamp; signatures used to avoid rework; existing size/signature checks.
+- Auto-scan: background watcher + interval (default 30 minutes) that enqueues scans on source changes or schedule; manual Dry Run/Run buttons remain.
+- Diff & history: `/api/scan/diff` compares current sources vs DB; `/api/scan/last` returns last dry-run/run; activity table persisted in SQLite.
+- Logging: stdout plus rotating file logs under `/config/logs`; optional debug log with per-action traces when enabled.
 - SQLite in WAL mode at `/config/galleryloom.db`; activity, archive_records (with virtual paths), settings, sources stored.
 
 ## Run with Docker
@@ -35,6 +36,26 @@ Notes for Unraid: map `/data` (usually read-only), `/output` (rw), `/config` (rw
   - `/output` → writable normalized library
   - `/config` → writable appdata (DB + logs)
   - `/duplicates` → optional duplicate sink
+
+## Install on Unraid (GUI)
+1. In Unraid, go to *Docker* → *Add Container* → *Template repositories* and add your template repo or paste `https://raw.githubusercontent.com/<your-username>/galleryloom/main/unraid/template.xml`.
+2. Choose the GalleryLoom template.
+3. Set paths: `/data` (ro), `/output` (rw), `/config` (rw), `/duplicates` (rw, optional).
+4. (Optional) Set `PUID`/`PGID` if you want created files owned by a specific user/group.
+5. Deploy, then open the WebUI and configure Sources/Settings.
+
+## Install on Unraid (CLI)
+```
+docker run -d --name=galleryloom \
+  -p 8080:8080 \
+  -v /mnt/user/yourdata:/data:ro \
+  -v /mnt/user/galleryloom-output:/output \
+  -v /mnt/user/appdata/galleryloom:/config \
+  -v /mnt/user/galleryloom-duplicates:/duplicates \
+  -e PUID=99 -e PGID=100 \
+  ghcr.io/yourorg/galleryloom:latest
+```
+Replace volume paths and image tag with your registry. `/duplicates` is optional.
 
 ## Local dev
 ```
@@ -109,6 +130,7 @@ Resulting output structure (after the run): `dev-output/Manga/SeriesA/Chapter1.z
 - Signatures (image count, bytes, newest mtime) are stored for gallery zips to decide overwrites when `update_gallery_zips` is enabled.
 - Activity log is queryable via `/api/activity` and printed to stdout.
 - Logging: base log at `/config/logs/galleryloom.log`; optional debug log at `/config/logs/galleryloom-debug.log` when `debug_logging` is enabled (toggle in Settings). Fetch logs via `/api/logs?level=info|debug` or use the dashboard Logs section.
+- Debugging tips: turn on `debug_logging` in the Settings UI to capture per-action traces. Use the dashboard Logs pane or `curl http://host:8080/api/logs?level=debug` to tail recent entries. Disable when not needed to reduce noise/IO.
 
 ## Self-test
 Run the lightweight harness to validate nested gallery handling and update decisions:
@@ -118,3 +140,4 @@ python scripts/self_test.py
 
 ## Changelog
 - 0.2.0: Unraid-ready paths + PUID/PGID, rotating logs, system endpoint, diff API/UI, LANraragi flatten + cbz option, foldercopy output mode, improved skip reasons, self-test harness.
+- 0.2.1: Added auto-scan watcher + interval controls, expanded docs for Unraid GUI/CLI install, debug logging notes.
