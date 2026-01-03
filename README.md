@@ -38,7 +38,7 @@ Notes for Unraid: map `/data` (usually read-only), `/output` (rw), `/config` (rw
   - `/duplicates` → optional duplicate sink
 
 ## Install on Unraid (GUI)
-1. In Unraid, go to *Docker* → *Add Container* → *Template repositories* and add your template repo or paste `https://raw.githubusercontent.com/<your-username>/galleryloom/main/unraid/template.xml`.
+1. In Unraid, go to *Docker* → *Add Container* → *Template repositories* and add your template repo or paste `https://raw.githubusercontent.com/megamjm/galleryloom/main/unraid/template.xml`.
 2. Choose the GalleryLoom template.
 3. Set paths: `/data` (ro), `/output` (rw), `/config` (rw), `/duplicates` (rw, optional).
 4. (Optional) Set `PUID`/`PGID` if you want created files owned by a specific user/group.
@@ -53,9 +53,10 @@ docker run -d --name=galleryloom \
   -v /mnt/user/appdata/galleryloom:/config \
   -v /mnt/user/galleryloom-duplicates:/duplicates \
   -e PUID=99 -e PGID=100 \
-  ghcr.io/yourorg/galleryloom:latest
+  ghcr.io/megamjm/galleryloom:latest
 ```
-Replace volume paths and image tag with your registry. `/duplicates` is optional.
+Replace volume paths (and image tag if you publish to a different registry). `/duplicates` is optional.
+
 
 ## Local dev
 ```

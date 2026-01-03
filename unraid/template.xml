@@ -1,14 +1,14 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>GalleryLoom</Name>
-  <Repository>ghcr.io/yourorg/galleryloom:latest</Repository>
+  <Repository>ghcr.io/megamjm/galleryloom:latest</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/yourorg/galleryloom</Support>
-  <Project>https://github.com/yourorg/galleryloom</Project>
+  <Support>https://github.com/megamjm/galleryloom</Support>
+  <Project>https://github.com/megamjm/galleryloom</Project>
   <Overview>
     GalleryLoom: scan /data for archives and gallery folders, normalize into /output.
     Required mounts: /data (read), /output (write), /config (write). Optional: /duplicates.
@@ -16,8 +16,8 @@
   </Overview>
   <Category>MediaApp:Books</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/yourorg/unraid-templates/main/galleryloom.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/yourorg/galleryloom/main/unraid/icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/megamjm/galleryloom/main/unraid/template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/megamjm/galleryloom/main/unraid/icon.png</Icon>
   <ExtraParams>--pull=always</ExtraParams>
   <PostArgs/>
   <CPUset/>
