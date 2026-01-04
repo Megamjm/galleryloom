@@ -164,3 +164,76 @@ class FsList(BaseModel):
     abs: str
     dirs: List[FsDir]
     truncated: bool = False
+
+
+class GalleryOutput(BaseModel):
+    path: str
+    virtual_path: Optional[str] = None
+    record_type: Literal["galleryzip", "foldercopy", "archive"]
+    exists: bool
+    size: Optional[int] = None
+    mtime: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+
+
+class DiscoveredGallery(BaseModel):
+    source_name: str
+    source_path: str
+    gallery_path: str
+    relative_path: str
+    image_count: int
+    total_image_bytes: int
+    newest_mtime: float
+    is_leaf: bool
+
+
+class GalleryPreview(BaseModel):
+    path: str
+    kind: Literal["zip", "folder", "file", "missing"]
+    exists: bool
+    size: Optional[int] = None
+    mtime: Optional[datetime] = None
+    entries: List[str] = []
+    truncated: bool = False
+
+
+class DuplicateEntry(BaseModel):
+    path: str
+    virtual_path: Optional[str] = None
+    record_type: str
+    signature: Optional[Dict[str, Any]] = None
+    last_seen_at: Optional[datetime] = None
+    exists: bool = False
+
+
+class DuplicateGroup(BaseModel):
+    signature_key: str
+    count: int
+    acknowledged: bool = False
+    entries: List[DuplicateEntry]
+
+
+class ImportResult(BaseModel):
+    saved_path: str
+    extracted: bool = False
+    extract_path: Optional[str] = None
+    skipped: bool = False
+    reason: Optional[str] = None
+
+
+class Exclusion(BaseModel):
+    id: int
+    path: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ExclusionCreate(BaseModel):
+    path: str
+
+
+class ExclusionResult(BaseModel):
+    exclusion: Exclusion
+    removed: int = 0

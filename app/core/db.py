@@ -63,3 +63,8 @@ async def _apply_migrations(conn):
     # archive_records additions
     if not await _has_column("archive_records", "virtual_target_path"):
         await conn.execute(text("ALTER TABLE archive_records ADD COLUMN virtual_target_path TEXT;"))
+
+    # exclusions table
+    result = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='exclusions';"))
+    if not result.fetchone():
+        await conn.execute(text("CREATE TABLE exclusions (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"))

@@ -21,6 +21,7 @@ from app.core import models
 from app.core.config import settings as env_settings
 from app.services.activity_service import log_activity
 from app.services.settings_service import get_settings
+from app.services.status_service import set_status
 
 SIDECAR_EXTS = {".txt", ".json", ".xml", ".nfo"}
 _last_results: Dict[str, Optional[ScanResult]] = {"dryrun": None, "run": None}
@@ -285,6 +286,13 @@ def _append_reason(summary: ScanSummary, reason: str | None):
         summary.skipped_existing += 1
 
 
+def _update_scan_status(completed: int, planned: int, message: str | None = None, dry_run: bool = True):
+    progress = None
+    if planned > 0:
+        progress = min(1.0, completed / planned)
+    set_status("scanning", message=message or "Scanning", progress=progress, meta={"dry_run": dry_run, "completed": completed, "planned": planned})
+
+
 def _debug_action(action: PlanAction, note: str | None = None):
     if not logger.isEnabledFor(logging.DEBUG):
         return
@@ -437,6 +445,18 @@ async def perform_scan(session: AsyncSession, dry_run: bool = True) -> ScanResul
     process_galleries = settings.zip_galleries or ("foldercopy" in output_modes)
     summary = ScanSummary()
     actions: List[PlanAction] = []
+    completed_ops = 0
+    planned_ops = 0
+
+    def _plan_op(message: str):
+        nonlocal planned_ops
+        planned_ops += 1
+        _update_scan_status(completed_ops, planned_ops, message=message, dry_run=dry_run)
+
+    def _complete_op(message: str):
+        nonlocal completed_ops
+        completed_ops += 1
+        _update_scan_status(completed_ops, planned_ops, message=message, dry_run=dry_run)
 
     logger.debug(
         "Starting scan dry_run=%s output_modes=%s settings=%s",
@@ -444,222 +464,256 @@ async def perform_scan(session: AsyncSession, dry_run: bool = True) -> ScanResul
         output_modes,
         settings.model_dump(),
     )
+    set_status("scanning", message="Scanning sources", progress=0.0, meta={"dry_run": dry_run})
 
-    result = await session.execute(select(models.Source).where(models.Source.enabled == True))  # noqa: E712
-    sources = sorted(result.scalars().all(), key=lambda s: s.path)
+    try:
+        result = await session.execute(select(models.Source).where(models.Source.enabled == True))  # noqa: E712
+        sources = sorted(result.scalars().all(), key=lambda s: s.path)
+        exclusions_result = await session.execute(select(models.Exclusion))
+        exclusions = [Path(ex.path) for ex in exclusions_result.scalars().all()]
 
-    data_root = Path(env_settings.data_root)
-    duplicates_root = Path(env_settings.duplicates_root)
-    duplicates_available = duplicates_root.exists() and duplicates_root.is_dir() and os.access(duplicates_root, os.W_OK)
-    flatten_name_map: Dict[str, str] = {}
+        data_root = Path(env_settings.data_root)
+        duplicates_root = Path(env_settings.duplicates_root)
+        duplicates_available = duplicates_root.exists() and duplicates_root.is_dir() and os.access(duplicates_root, os.W_OK)
+        flatten_name_map: Dict[str, str] = {}
 
-    global _warned_missing_duplicates
-    if settings.duplicates_enabled and not duplicates_available and not _warned_missing_duplicates:
-        await log_activity(
-            session,
-            "WARN",
-            "Duplicates directory unavailable; falling back to rename strategy",
-            {"path": str(duplicates_root)},
-        )
-        _warned_missing_duplicates = True
-        logger.debug("Duplicates directory unavailable: %s", duplicates_root)
+        global _warned_missing_duplicates
+        if settings.duplicates_enabled and not duplicates_available and not _warned_missing_duplicates:
+            await log_activity(
+                session,
+                "WARN",
+                "Duplicates directory unavailable; falling back to rename strategy",
+                {"path": str(duplicates_root)},
+            )
+            _warned_missing_duplicates = True
+            logger.debug("Duplicates directory unavailable: %s", duplicates_root)
 
-    for source in sources:
-        base_path = data_root / source.path
-        logger.debug("Scanning source id=%s name=%s path=%s mode=%s", source.id, source.name, base_path, source.scan_mode)
-        if not base_path.exists():
-            await log_activity(session, "WARN", f"Source path missing: {base_path}", {"source_id": source.id})
-            logger.debug("Source path missing, skipping %s", base_path)
-            continue
-
-        # process archives
-        if source.scan_mode != "folders_only":
-            for archive_path in _iter_archives(base_path, settings.archive_extensions):
-                rel_path = archive_path.relative_to(data_root)
-                physical_target, virtual_target = _resolve_output_file(
-                    rel_path,
-                    settings.replicate_nesting,
-                    settings.lanraragi_flatten,
-                    flatten_name_map,
-                )
-                signature = _archive_signature(archive_path)
-                existing_record = await _get_record(session, physical_target)
-                action = PlanAction(
-                    action="copy_archive",
-                    type="archive",
-                    source_path=str(archive_path),
-                    target_path=str(physical_target),
-                    virtual_target=str(virtual_target),
-                    relative_source=str(rel_path),
-                    signature=signature,
-                    similarity=1.0,
-                    decision="COPY",
-                    bytes=signature["size"],
-                )
-
-                if physical_target.exists():
-                    is_same = existing_record and existing_record.signature_json and json.loads(existing_record.signature_json) == signature
-                    if is_same:
-                        action.decision = "SKIP"
-                        action.reason = "SKIP_EXISTING_UNCHANGED"
-                        action.reason_code = "SKIP_EXISTING_UNCHANGED"
-                        if not dry_run:
-                            await log_activity(session, "INFO", "Archive unchanged, skipping", action.model_dump())
-                            await _touch_record(session, physical_target)
-                        _register_action(action, summary, actions)
-                        continue
-
-                    if physical_target.stat().st_size == signature["size"]:
-                        action.decision = "SKIP"
-                        action.reason = "SKIP_DUPLICATE_SAME_SIZE"
-                        action.reason_code = "SKIP_DUPLICATE_SAME_SIZE"
-                        if not dry_run:
-                            await log_activity(session, "INFO", "Archive duplicate size, skipping", action.model_dump())
-                            await _touch_record(session, physical_target)
-                        _register_action(action, summary, actions)
-                        continue
-
-                    alt_target: Path
-                    if settings.duplicates_enabled and duplicates_available:
-                        alt_target = duplicates_root / rel_path
-                        action.decision = "COPY_DUPLICATE"
-                        action.target_path = str(alt_target)
-                        action.reason = "SKIP_OUTPUT_CONFLICT"
-                        action.reason_code = "SKIP_OUTPUT_CONFLICT"
-                    else:
-                        alt_target = physical_target.with_name(f"{physical_target.stem}_DUP_{int(time.time())}{physical_target.suffix}")
-                        action.decision = "RENAME"
-                        action.target_path = str(alt_target)
-                        action.reason = "SKIP_OUTPUT_CONFLICT"
-                        action.reason_code = "SKIP_OUTPUT_CONFLICT"
-                    if not dry_run:
-                        _copy_file(archive_path, alt_target)
-                        await _upsert_record(session, alt_target, archive_path, "archive", signature, virtual_target_path=virtual_target)
-                        await log_activity(session, "INFO", "Archive duplicated", action.model_dump())
-                    _register_action(action, summary, actions)
-                    continue
-
-                if not dry_run:
-                    _copy_file(archive_path, physical_target)
-                    await _upsert_record(session, physical_target, archive_path, "archive", signature, virtual_target_path=virtual_target)
-                    await log_activity(session, "INFO", "Archive copied", action.model_dump())
-                _register_action(action, summary, actions)
-
-        if not process_galleries or source.scan_mode == "archives_only":
-            continue
-
-        galleries, skip_actions, container_dirs = _discover_galleries(base_path, data_root, settings)
-        for skip_action in skip_actions:
-            _register_action(skip_action, summary, actions)
-
-        # ensure container directories exist for nested outputs
-        if (settings.replicate_nesting and not settings.lanraragi_flatten) or ("foldercopy" in output_modes):
-            for container in container_dirs:
-                rel_dir = container.relative_to(data_root)
-                target_dir = Path(env_settings.output_root) / _virtual_relpath(rel_dir, settings.replicate_nesting)
-                ensure_action = PlanAction(
-                    action="ensure_output_dir",
-                    type="container",
-                    source_path=str(container),
-                    target_path=str(target_dir),
-                    relative_source=str(rel_dir),
-                    decision="ENSURE_DIR",
-                )
-                if not dry_run:
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                _register_action(ensure_action, summary, actions)
-
-        for gallery in sorted(galleries, key=lambda g: str(g.rel_dir)):
-            rel_dir = gallery.rel_dir
-            sidecars: List[Path] = []
-            if settings.copy_sidecars:
-                sidecars = _gather_sidecars(gallery.path, settings.consider_images_in_subfolders)
-
-            modes_to_apply = []
-            if "zip" in output_modes:
-                modes_to_apply.append("zip")
-            if "foldercopy" in output_modes:
-                modes_to_apply.append("foldercopy")
-
-            # skip galleries with no images
-            if not gallery.images:
-                skip_action = PlanAction(
-                    action="scan_gallery",
-                    type="gallery",
-                    source_path=str(gallery.path),
-                    relative_source=str(rel_dir),
-                    decision="SKIP",
-                    reason="SKIP_NO_IMAGES",
-                    reason_code="SKIP_NO_IMAGES",
-                )
-                _register_action(skip_action, summary, actions)
+        for source in sources:
+            base_path = data_root / source.path
+            logger.debug("Scanning source id=%s name=%s path=%s mode=%s", source.id, source.name, base_path, source.scan_mode)
+            if not base_path.exists():
+                await log_activity(session, "WARN", f"Source path missing: {base_path}", {"source_id": source.id})
+                logger.debug("Source path missing, skipping %s", base_path)
                 continue
 
-            for mode in modes_to_apply:
-                if mode == "zip":
-                    extension = settings.archive_extension_for_galleries.lstrip(".")
-                    rel_file = rel_dir.parent / f"{rel_dir.name}.{extension}"
-                    target_path, virtual_target = _resolve_output_file(
-                        rel_file,
+            # process archives
+            if source.scan_mode != "folders_only":
+                for archive_path in _iter_archives(base_path, settings.archive_extensions):
+                    rel_path = archive_path.relative_to(data_root)
+                    if any(rel_path.is_relative_to(exc) for exc in exclusions):
+                        logger.debug("Skipping excluded archive %s", rel_path)
+                        continue
+                    physical_target, virtual_target = _resolve_output_file(
+                        rel_path,
                         settings.replicate_nesting,
                         settings.lanraragi_flatten,
                         flatten_name_map,
                     )
-                    existing_record = await _get_record(session, target_path)
+                    signature = _archive_signature(archive_path)
+                    existing_record = await _get_record(session, physical_target)
                     action = PlanAction(
-                        action="zip_gallery",
-                        type="gallery",
-                        source_path=str(gallery.path),
-                        target_path=str(target_path),
+                        action="copy_archive",
+                        type="archive",
+                        source_path=str(archive_path),
+                        target_path=str(physical_target),
                         virtual_target=str(virtual_target),
-                        relative_source=str(rel_dir),
-                        signature=gallery.signature,
-                        similarity=float(fuzz.ratio(gallery.path.name, rel_dir.name)) / 100.0,
-                        decision="ZIP",
-                        bytes=gallery.signature.get("total_image_bytes"),
+                        relative_source=str(rel_path),
+                        signature=signature,
+                        similarity=1.0,
+                        decision="COPY",
+                        bytes=signature["size"],
                     )
 
-                    if target_path.exists():
-                        same_signature = existing_record and existing_record.signature_json and json.loads(existing_record.signature_json) == gallery.signature
-                        if same_signature:
+                    if physical_target.exists():
+                        is_same = existing_record and existing_record.signature_json and json.loads(existing_record.signature_json) == signature
+                        if is_same:
                             action.decision = "SKIP"
-                            action.reason = "SKIP_DUPLICATE_SAME_SIGNATURE"
-                            action.reason_code = "SKIP_DUPLICATE_SAME_SIGNATURE"
+                            action.reason = "SKIP_EXISTING_UNCHANGED"
+                            action.reason_code = "SKIP_EXISTING_UNCHANGED"
                             if not dry_run:
-                                await log_activity(session, "INFO", "Gallery unchanged, skip", action.model_dump())
-                                await _touch_record(session, target_path)
+                                await log_activity(session, "INFO", "Archive unchanged, skipping", action.model_dump())
+                                await _touch_record(session, physical_target)
                             _register_action(action, summary, actions)
                             continue
 
-                        if not settings.update_gallery_zips:
-                            alt_target: Path
-                            if settings.duplicates_enabled and duplicates_available:
-                                alt_target = duplicates_root / rel_dir / f"{rel_dir.name}.{extension}"
-                                action.decision = "COPY_DUPLICATE"
-                            else:
-                                alt_target = target_path.with_name(f"{target_path.stem}_DUP_{int(time.time())}{target_path.suffix}")
-                                action.decision = "RENAME"
+                        if physical_target.stat().st_size == signature["size"]:
+                            action.decision = "SKIP"
+                            action.reason = "SKIP_DUPLICATE_SAME_SIZE"
+                            action.reason_code = "SKIP_DUPLICATE_SAME_SIZE"
+                            if not dry_run:
+                                await log_activity(session, "INFO", "Archive duplicate size, skipping", action.model_dump())
+                                await _touch_record(session, physical_target)
+                            _register_action(action, summary, actions)
+                            continue
+
+                        alt_target: Path
+                        if settings.duplicates_enabled and duplicates_available:
+                            alt_target = duplicates_root / rel_path
+                            action.decision = "COPY_DUPLICATE"
                             action.target_path = str(alt_target)
                             action.reason = "SKIP_OUTPUT_CONFLICT"
                             action.reason_code = "SKIP_OUTPUT_CONFLICT"
+                        else:
+                            alt_target = physical_target.with_name(f"{physical_target.stem}_DUP_{int(time.time())}{physical_target.suffix}")
+                            action.decision = "RENAME"
+                            action.target_path = str(alt_target)
+                            action.reason = "SKIP_OUTPUT_CONFLICT"
+                            action.reason_code = "SKIP_OUTPUT_CONFLICT"
+                        if not dry_run:
+                            _plan_op("Copying archive duplicate")
+                            _copy_file(archive_path, alt_target)
+                            _complete_op("Copying archive duplicate")
+                            await _upsert_record(session, alt_target, archive_path, "archive", signature, virtual_target_path=virtual_target)
+                            await log_activity(session, "INFO", "Archive duplicated", action.model_dump())
+                        _register_action(action, summary, actions)
+                        continue
+
+                    if not dry_run:
+                        _plan_op("Copying archive")
+                        _copy_file(archive_path, physical_target)
+                        _complete_op("Copying archive")
+                        await _upsert_record(session, physical_target, archive_path, "archive", signature, virtual_target_path=virtual_target)
+                        await log_activity(session, "INFO", "Archive copied", action.model_dump())
+                    _register_action(action, summary, actions)
+
+            if not process_galleries or source.scan_mode == "archives_only":
+                continue
+
+            galleries, skip_actions, container_dirs = _discover_galleries(base_path, data_root, settings)
+            for skip_action in skip_actions:
+                _register_action(skip_action, summary, actions)
+
+            # ensure container directories exist for nested outputs
+            if (settings.replicate_nesting and not settings.lanraragi_flatten) or ("foldercopy" in output_modes):
+                for container in container_dirs:
+                    rel_dir = container.relative_to(data_root)
+                    target_dir = Path(env_settings.output_root) / _virtual_relpath(rel_dir, settings.replicate_nesting)
+                    ensure_action = PlanAction(
+                        action="ensure_output_dir",
+                        type="container",
+                        source_path=str(container),
+                        target_path=str(target_dir),
+                        relative_source=str(rel_dir),
+                        decision="ENSURE_DIR",
+                    )
+                    if not dry_run:
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                    _register_action(ensure_action, summary, actions)
+
+            for gallery in sorted(galleries, key=lambda g: str(g.rel_dir)):
+                rel_dir = gallery.rel_dir
+                if any(rel_dir.is_relative_to(exc) for exc in exclusions):
+                    logger.debug("Skipping excluded gallery %s", rel_dir)
+                    continue
+                sidecars: List[Path] = []
+                if settings.copy_sidecars:
+                    sidecars = _gather_sidecars(gallery.path, settings.consider_images_in_subfolders)
+
+                modes_to_apply = []
+                if "zip" in output_modes:
+                    modes_to_apply.append("zip")
+                if "foldercopy" in output_modes:
+                    modes_to_apply.append("foldercopy")
+
+                # skip galleries with no images
+                if not gallery.images:
+                    skip_action = PlanAction(
+                        action="scan_gallery",
+                        type="gallery",
+                        source_path=str(gallery.path),
+                        relative_source=str(rel_dir),
+                        decision="SKIP",
+                        reason="SKIP_NO_IMAGES",
+                        reason_code="SKIP_NO_IMAGES",
+                    )
+                    _register_action(skip_action, summary, actions)
+                    continue
+
+                for mode in modes_to_apply:
+                    if mode == "zip":
+                        extension = settings.archive_extension_for_galleries.lstrip(".")
+                        rel_file = rel_dir.parent / f"{rel_dir.name}.{extension}"
+                        target_path, virtual_target = _resolve_output_file(
+                            rel_file,
+                            settings.replicate_nesting,
+                            settings.lanraragi_flatten,
+                            flatten_name_map,
+                        )
+                        existing_record = await _get_record(session, target_path)
+                        action = PlanAction(
+                            action="zip_gallery",
+                            type="gallery",
+                            source_path=str(gallery.path),
+                            target_path=str(target_path),
+                            virtual_target=str(virtual_target),
+                            relative_source=str(rel_dir),
+                            signature=gallery.signature,
+                            similarity=float(fuzz.ratio(gallery.path.name, rel_dir.name)) / 100.0,
+                            decision="ZIP",
+                            bytes=gallery.signature.get("total_image_bytes"),
+                        )
+
+                        if target_path.exists():
+                            same_signature = existing_record and existing_record.signature_json and json.loads(existing_record.signature_json) == gallery.signature
+                            if same_signature:
+                                action.decision = "SKIP"
+                                action.reason = "SKIP_DUPLICATE_SAME_SIGNATURE"
+                                action.reason_code = "SKIP_DUPLICATE_SAME_SIGNATURE"
+                                if not dry_run:
+                                    await log_activity(session, "INFO", "Gallery unchanged, skip", action.model_dump())
+                                    await _touch_record(session, target_path)
+                                _register_action(action, summary, actions)
+                                continue
+
+                            if not settings.update_gallery_zips:
+                                alt_target: Path
+                                if settings.duplicates_enabled and duplicates_available:
+                                    alt_target = duplicates_root / rel_dir / f"{rel_dir.name}.{extension}"
+                                    action.decision = "COPY_DUPLICATE"
+                                else:
+                                    alt_target = target_path.with_name(f"{target_path.stem}_DUP_{int(time.time())}{target_path.suffix}")
+                                    action.decision = "RENAME"
+                                action.target_path = str(alt_target)
+                                action.reason = "SKIP_OUTPUT_CONFLICT"
+                                action.reason_code = "SKIP_OUTPUT_CONFLICT"
+                                if not dry_run:
+                                    _plan_op("Writing duplicate gallery zip")
+                                    _write_zip(gallery.path, gallery.images, alt_target)
+                                    _complete_op("Writing duplicate gallery zip")
+                                    await _upsert_record(
+                                        session,
+                                        alt_target,
+                                        gallery.path,
+                                        "galleryzip",
+                                        gallery.signature,
+                                        virtual_target_path=virtual_target,
+                                    )
+                                    await log_activity(session, "INFO", "Gallery duplicate written", action.model_dump())
+                                _register_action(action, summary, actions)
+                                continue
+
+                            action.action = "overwrite_zip"
+                            action.decision = "UPDATE"
                             if not dry_run:
-                                _write_zip(gallery.path, gallery.images, alt_target)
+                                _plan_op("Updating gallery zip")
+                                _write_zip(gallery.path, gallery.images, target_path)
+                                _complete_op("Updating gallery zip")
                                 await _upsert_record(
                                     session,
-                                    alt_target,
+                                    target_path,
                                     gallery.path,
                                     "galleryzip",
                                     gallery.signature,
                                     virtual_target_path=virtual_target,
                                 )
-                                await log_activity(session, "INFO", "Gallery duplicate written", action.model_dump())
+                                await log_activity(session, "INFO", "Gallery zip updated", action.model_dump())
                             _register_action(action, summary, actions)
                             continue
 
-                        action.action = "overwrite_zip"
-                        action.decision = "UPDATE"
                         if not dry_run:
+                            _plan_op("Writing gallery zip")
                             _write_zip(gallery.path, gallery.images, target_path)
+                            _complete_op("Writing gallery zip")
                             await _upsert_record(
                                 session,
                                 target_path,
@@ -668,68 +722,60 @@ async def perform_scan(session: AsyncSession, dry_run: bool = True) -> ScanResul
                                 gallery.signature,
                                 virtual_target_path=virtual_target,
                             )
-                            await log_activity(session, "INFO", "Gallery zip updated", action.model_dump())
+                            await log_activity(session, "INFO", "Gallery zipped", action.model_dump())
                         _register_action(action, summary, actions)
-                        continue
 
-                    if not dry_run:
-                        _write_zip(gallery.path, gallery.images, target_path)
-                        await _upsert_record(
-                            session,
-                            target_path,
-                            gallery.path,
-                            "galleryzip",
-                            gallery.signature,
-                            virtual_target_path=virtual_target,
+                    if mode == "foldercopy":
+                        target_dir = Path(env_settings.output_root) / _virtual_relpath(rel_dir, settings.replicate_nesting)
+                        existing_record = await _get_record(session, target_dir)
+                        action = PlanAction(
+                            action="foldercopy_gallery",
+                            type="gallery",
+                            source_path=str(gallery.path),
+                            target_path=str(target_dir),
+                            relative_source=str(rel_dir),
+                            signature=gallery.signature,
+                            decision="FOLDERCOPY",
+                            bytes=gallery.signature.get("total_image_bytes"),
                         )
-                        await log_activity(session, "INFO", "Gallery zipped", action.model_dump())
-                    _register_action(action, summary, actions)
 
-                if mode == "foldercopy":
-                    target_dir = Path(env_settings.output_root) / _virtual_relpath(rel_dir, settings.replicate_nesting)
-                    existing_record = await _get_record(session, target_dir)
-                    action = PlanAction(
-                        action="foldercopy_gallery",
-                        type="gallery",
-                        source_path=str(gallery.path),
-                        target_path=str(target_dir),
-                        relative_source=str(rel_dir),
-                        signature=gallery.signature,
-                        decision="FOLDERCOPY",
-                        bytes=gallery.signature.get("total_image_bytes"),
-                    )
+                        same_signature = existing_record and existing_record.signature_json and json.loads(existing_record.signature_json) == gallery.signature
+                        if target_dir.exists() and same_signature:
+                            action.decision = "SKIP"
+                            action.reason = "SKIP_DUPLICATE_SAME_SIGNATURE"
+                            action.reason_code = "SKIP_DUPLICATE_SAME_SIGNATURE"
+                            if not dry_run:
+                                await log_activity(session, "INFO", "Folder copy unchanged, skip", action.model_dump())
+                                await _touch_record(session, target_dir)
+                            _register_action(action, summary, actions)
+                            continue
 
-                    same_signature = existing_record and existing_record.signature_json and json.loads(existing_record.signature_json) == gallery.signature
-                    if target_dir.exists() and same_signature:
-                        action.decision = "SKIP"
-                        action.reason = "SKIP_DUPLICATE_SAME_SIGNATURE"
-                        action.reason_code = "SKIP_DUPLICATE_SAME_SIGNATURE"
+                        if target_dir.exists() and not settings.update_gallery_zips:
+                            action.decision = "SKIP"
+                            action.reason = "SKIP_OUTPUT_CONFLICT"
+                            action.reason_code = "SKIP_OUTPUT_CONFLICT"
+                            _register_action(action, summary, actions)
+                            continue
+
                         if not dry_run:
-                            await log_activity(session, "INFO", "Folder copy unchanged, skip", action.model_dump())
-                            await _touch_record(session, target_dir)
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            _plan_op("Copying folder")
+                            _copy_folder_contents(gallery.path, gallery.images, sidecars, target_dir)
+                            _complete_op("Copying folder")
+                            await _upsert_record(
+                                session,
+                                target_dir,
+                                gallery.path,
+                                "foldercopy",
+                                gallery.signature,
+                                virtual_target_path=target_dir,
+                            )
+                            await log_activity(session, "INFO", "Folder copied", action.model_dump())
                         _register_action(action, summary, actions)
-                        continue
-
-                    if target_dir.exists() and not settings.update_gallery_zips:
-                        action.decision = "SKIP"
-                        action.reason = "SKIP_OUTPUT_CONFLICT"
-                        action.reason_code = "SKIP_OUTPUT_CONFLICT"
-                        _register_action(action, summary, actions)
-                        continue
-
-                    if not dry_run:
-                        target_dir.mkdir(parents=True, exist_ok=True)
-                        _copy_folder_contents(gallery.path, gallery.images, sidecars, target_dir)
-                        await _upsert_record(
-                            session,
-                            target_dir,
-                            gallery.path,
-                            "foldercopy",
-                            gallery.signature,
-                            virtual_target_path=target_dir,
-                        )
-                        await log_activity(session, "INFO", "Folder copied", action.model_dump())
-                    _register_action(action, summary, actions)
+    except Exception:
+        set_status("error", message="Scan failed", progress=None, meta={"dry_run": dry_run})
+        logger.debug("Scan failed", exc_info=True)
+        raise
 
     result_payload = ScanResult(summary=summary, actions=actions)
     logger.debug(
@@ -740,6 +786,7 @@ async def perform_scan(session: AsyncSession, dry_run: bool = True) -> ScanResul
         len(actions),
     )
     _last_results["dryrun" if dry_run else "run"] = result_payload
+    set_status("standby", message="Idle", progress=None, meta={"last_run": "dryrun" if dry_run else "run"})
     return result_payload
 
 

@@ -10,10 +10,13 @@ from app.api.routes_activity import router as activity_router
 from app.api.routes_fs import router as fs_router
 from app.api.routes_health import router as health_router
 from app.api.routes_logs import router as logs_router
+from app.api.routes_galleries import router as galleries_router
 from app.api.routes_scan import router as scan_router
 from app.api.routes_settings import router as settings_router
 from app.api.routes_sources import router as sources_router
 from app.api.routes_system import router as system_router
+from app.api.routes_status import router as status_router
+from app.api.routes_exclusions import router as exclusions_router
 from app.core.config import APP_VERSION, settings as env_settings
 from app.core.db import init_db, SessionLocal
 from app.core.logging_utils import setup_logging, reconfigure_logging
@@ -90,6 +93,21 @@ async def ui_sources():
     return FileResponse(_ui_file("sources.html"))
 
 
+@app.get("/logs")
+async def ui_logs():
+    return FileResponse(_ui_file("logs.html"))
+
+
+@app.get("/duplicates")
+async def ui_duplicates():
+    return FileResponse(_ui_file("duplicates.html"))
+
+
+@app.get("/galleries")
+async def ui_galleries():
+    return FileResponse(_ui_file("galleries.html"))
+
+
 @app.get("/settings")
 async def ui_settings():
     return FileResponse(_ui_file("settings.html"))
@@ -103,5 +121,8 @@ app.include_router(activity_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(system_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
+app.include_router(galleries_router, prefix="/api")
+app.include_router(status_router, prefix="/api")
+app.include_router(exclusions_router, prefix="/api")
 app.include_router(health_router, prefix="/api")
 app.include_router(fs_router, prefix="/api")

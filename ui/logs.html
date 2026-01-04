@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>GalleryLoom · Logs</title>
+</head>
+<body>
+  <header>
+    <h1>GalleryLoom Logs</h1>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/galleries">Galleries</a>
+      <a href="/duplicates">Duplicates</a>
+      <a href="/sources">Sources</a>
+      <a href="/logs">Logs</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+  <main>
+    <section>
+      <h2>Live App Logs</h2>
+      <div class="flex" style="gap:10px">
+        <div>
+          <label>Level</label>
+          <select id="logLevel">
+            <option value="info">Base</option>
+            <option value="debug">Debug</option>
+          </select>
+        </div>
+        <div>
+          <label>Lines</label>
+          <input type="number" id="logLines" value="300" min="50" max="2000" style="width:120px">
+        </div>
+        <div>
+          <label>Refresh (sec)</label>
+          <input type="number" id="logInterval" value="3" min="1" max="30" style="width:120px">
+        </div>
+        <div style="align-self:flex-end">
+          <label><input type="checkbox" id="autoScroll" checked> Follow output</label>
+        </div>
+        <div style="flex:1"></div>
+        <div style="align-self:flex-end; display:flex; gap:8px; align-items:center;">
+          <span id="liveStatus" class="status-dot"></span><span class="muted" id="liveLabel">Live</span>
+          <button id="toggleLiveBtn" class="secondary">Pause</button>
+          <button id="refreshBtn" class="ghost">Refresh now</button>
+        </div>
+      </div>
+      <pre id="liveLogs" class="log" style="white-space:pre-wrap;margin-top:10px;max-height:480px;"></pre>
+      <div class="muted" id="liveMeta" style="margin-top:6px"></div>
+    </section>
+
+    <section>
+      <h2>Activity Console</h2>
+      <div class="flex" style="gap:10px">
+        <div>
+          <label>Entries</label>
+          <input type="number" id="activityLimit" value="80" min="10" max="200" style="width:120px">
+        </div>
+        <div>
+          <label>Refresh (sec)</label>
+          <input type="number" id="activityInterval" value="6" min="2" max="60" style="width:120px">
+        </div>
+        <div style="flex:1"></div>
+        <div style="align-self:flex-end; display:flex; gap:8px; align-items:center;">
+          <span id="activityStatus" class="status-dot"></span><span class="muted" id="activityLabel">Live</span>
+          <button id="toggleActivityBtn" class="secondary">Pause</button>
+          <button id="refreshActivityBtn" class="ghost">Refresh now</button>
+        </div>
+      </div>
+      <div id="activityConsole" class="log" style="margin-top:10px; max-height:360px; overflow:auto; white-space:pre-wrap;">Loading…</div>
+    </section>
+  </main>
+
+  <script>
+    const logLevel = document.getElementById("logLevel");
+    const logLines = document.getElementById("logLines");
+    const logInterval = document.getElementById("logInterval");
+    const autoScroll = document.getElementById("autoScroll");
+    const liveLogs = document.getElementById("liveLogs");
+    const liveStatus = document.getElementById("liveStatus");
+    const liveLabel = document.getElementById("liveLabel");
+    const toggleLiveBtn = document.getElementById("toggleLiveBtn");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const liveMeta = document.getElementById("liveMeta");
+
+    const activityConsole = document.getElementById("activityConsole");
+    const activityLimit = document.getElementById("activityLimit");
+    const activityInterval = document.getElementById("activityInterval");
+    const activityStatus = document.getElementById("activityStatus");
+    const activityLabel = document.getElementById("activityLabel");
+    const toggleActivityBtn = document.getElementById("toggleActivityBtn");
+    const refreshActivityBtn = document.getElementById("refreshActivityBtn");
+
+    let liveTimer = null;
+    let activityTimer = null;
+
+    function formatTs(tsStr) {
+      const dt = new Date(tsStr);
+      return isNaN(dt.getTime()) ? tsStr : dt.toLocaleString();
+    }
+
+    async function fetchLogs() {
+      const level = logLevel.value;
+      const lines = parseInt(logLines.value || "300", 10);
+      const res = await fetch(`/api/logs?level=${encodeURIComponent(level)}&lines=${lines}`);
+      const data = await res.json();
+      if (!data.exists) {
+        liveLogs.textContent = `No ${level} log file yet.`;
+        return;
+      }
+      liveLogs.textContent = data.lines.join("\n");
+      liveMeta.textContent = `Showing last ${data.lines.length} lines from ${level} log · Updated ${new Date().toLocaleTimeString()}`;
+      if (autoScroll.checked) {
+        liveLogs.scrollTop = liveLogs.scrollHeight;
+      }
+    }
+
+    function startLive() {
+      stopLive();
+      fetchLogs().catch(() => {});
+      const interval = Math.max(1, parseInt(logInterval.value || "3", 10)) * 1000;
+      liveTimer = setInterval(fetchLogs, interval);
+      liveStatus.classList.remove("paused");
+      liveLabel.textContent = "Live";
+      toggleLiveBtn.textContent = "Pause";
+    }
+
+    function stopLive() {
+      if (liveTimer) clearInterval(liveTimer);
+      liveTimer = null;
+      liveStatus.classList.add("paused");
+      liveLabel.textContent = "Paused";
+      toggleLiveBtn.textContent = "Resume";
+    }
+
+    async function fetchActivity() {
+      const limit = parseInt(activityLimit.value || "80", 10);
+      const res = await fetch(`/api/activity?limit=${limit}`);
+      const data = await res.json();
+      const lines = data.map(item => {
+        let payload = item.payload_json;
+        try {
+          payload = JSON.stringify(JSON.parse(item.payload_json));
+        } catch (e) {}
+        return `[${item.level}] ${formatTs(item.ts)} · ${item.message} :: ${payload}`;
+      });
+      activityConsole.textContent = lines.join("\n");
+      if (autoScroll.checked) {
+        activityConsole.scrollTop = activityConsole.scrollHeight;
+      }
+    }
+
+    function startActivity() {
+      stopActivity();
+      fetchActivity().catch(() => {});
+      const interval = Math.max(2, parseInt(activityInterval.value || "6", 10)) * 1000;
+      activityTimer = setInterval(fetchActivity, interval);
+      activityStatus.classList.remove("paused");
+      activityLabel.textContent = "Live";
+      toggleActivityBtn.textContent = "Pause";
+    }
+
+    function stopActivity() {
+      if (activityTimer) clearInterval(activityTimer);
+      activityTimer = null;
+      activityStatus.classList.add("paused");
+      activityLabel.textContent = "Paused";
+      toggleActivityBtn.textContent = "Resume";
+    }
+
+    toggleLiveBtn.addEventListener("click", () => {
+      if (liveTimer) {
+        stopLive();
+      } else {
+        startLive();
+      }
+    });
+    refreshBtn.addEventListener("click", () => fetchLogs().catch(() => {}));
+    logLevel.addEventListener("change", () => fetchLogs().catch(() => {}));
+    logLines.addEventListener("change", () => fetchLogs().catch(() => {}));
+    logInterval.addEventListener("change", startLive);
+
+    toggleActivityBtn.addEventListener("click", () => {
+      if (activityTimer) {
+        stopActivity();
+      } else {
+        startActivity();
+      }
+    });
+    refreshActivityBtn.addEventListener("click", () => fetchActivity().catch(() => {}));
+    activityLimit.addEventListener("change", () => fetchActivity().catch(() => {}));
+    activityInterval.addEventListener("change", startActivity);
+
+    startLive();
+    startActivity();
+    (function setupStatusBar() {
+      const bar = document.createElement("div");
+      bar.className = "status-bar";
+      bar.innerHTML = `
+        <span id="statusState" class="badge">standby</span>
+        <small id="statusMessage">Idle</small>
+        <div class="progress"><span id="statusProgress"></span></div>
+        <small id="statusMeta"></small>
+      `;
+      document.body.appendChild(bar);
+      const stateEl = bar.querySelector("#statusState");
+      const msgEl = bar.querySelector("#statusMessage");
+      const progEl = bar.querySelector("#statusProgress");
+      const metaEl = bar.querySelector("#statusMeta");
+      async function refreshStatus() {
+        try {
+          const res = await fetch("/api/status/");
+          const data = await res.json();
+          const st = data.status || {};
+          stateEl.textContent = st.state || "unknown";
+          msgEl.textContent = st.message || "";
+          if (typeof st.progress === "number") {
+            progEl.style.width = `${Math.round(st.progress * 100)}%`;
+          } else {
+            progEl.style.width = "0%";
+          }
+          metaEl.textContent = `Queue ${data.queue_depth || 0} · Running ${data.running_jobs ? data.running_jobs.length : 0}`;
+        } catch (e) {
+          msgEl.textContent = "Status unavailable";
+        }
+      }
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+    })();
+  </script>
+</body>
+</html>

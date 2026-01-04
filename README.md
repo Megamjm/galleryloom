@@ -10,6 +10,11 @@ A minimal FastAPI + SQLite MVP that scans mounted media under `/data`, copies ar
 - Duplicate handling: optional `/duplicates` sink or automatic rename with timestamp; signatures used to avoid rework; existing size/signature checks.
 - Auto-scan: background watcher + interval (default 30 minutes) that enqueues scans on source changes or schedule; manual Dry Run/Run buttons remain.
 - Diff & history: `/api/scan/diff` compares current sources vs DB; `/api/scan/last` returns last dry-run/run; activity table persisted in SQLite.
+- Logs: dedicated live logs page with auto-refresh, pause, and activity console.
+- Galleries: galleries page lists output archives plus discovered galleries, lets you preview contents, trigger a one-off update/zip, and import files or archives straight into `/output` (with optional extraction).
+- Duplicates: duplicates page groups gallery outputs by signature, surfaces clashes, and lets you acknowledge reviewed sets.
+- Status bar: global bottom bar shows queue depth, running state (standby/scanning/copying), and progress when work is executing.
+- Exclusions: block specific relative paths under `/data`, automatically remove any existing outputs for them, and skip them in future scans via `/galleries` UI or `/api/exclusions`.
 - Logging: stdout plus rotating file logs under `/config/logs`; optional debug log with per-action traces when enabled.
 - SQLite in WAL mode at `/config/galleryloom.db`; activity, archive_records (with virtual paths), settings, sources stored.
 
@@ -81,6 +86,7 @@ Visit the UI at `/`, `/sources`, `/settings`. API examples:
 - Optional zip temp override: set `GLOOM_TEMP_DIR` if you want scratch space on a specific filesystem; otherwise the app writes zips in the destination directory first and falls back to `GLOOM_TMP_ROOT`.
 - Allowed browse roots for the folder picker/API are set with `GLOOM_BROWSE_ROOTS` (JSON array, e.g. `["/data","/output"]`); defaults to data + output roots.
 - List-style env vars must be JSON arrays (examples: `GLOOM_ARCHIVE_EXTENSIONS='["zip","cbz"]'`, `GLOOM_IMAGE_EXTENSIONS='["jpg","png"]'`).
+- Import uploads land under `/output`; optional extraction is available for ZIP/CBZ via the Galleries page or `/api/galleries/import/upload`.
 
 ## LANraragi compatibility
 - `lanraragi_flatten=true` places archives at the `/output` root while tracking their virtual nested paths in the DB (collisions append `__{hash}`).
@@ -135,6 +141,7 @@ Resulting output structure (after the run): `dev-output/Manga/SeriesA/Chapter1.z
 - Zips are written in the destination folder when possible for atomic replace; if a cross-device move is required, the writer falls back to `GLOOM_TMP_ROOT`/`GLOOM_TEMP_DIR` with a copy+replace that cleans up partial files.
 - Duplicate handling: same-size dest skips; otherwise copies to `/duplicates` when mounted/enabled or renames with `_DUP_{timestamp}` in `/output`.
 - Signatures (image count, bytes, newest mtime) are stored for gallery zips to decide overwrites when `update_gallery_zips` is enabled.
+- UI extras: `/logs` for live logs + activity console, `/galleries` for output/discovered lists with preview/update/import tools, `/duplicates` to group matching outputs and mark reviewed sets.
 - Activity log is queryable via `/api/activity` and printed to stdout.
 - Logging: base log at `/config/logs/galleryloom.log`; optional debug log at `/config/logs/galleryloom-debug.log` when `debug_logging` is enabled (toggle in Settings). Fetch logs via `/api/logs?level=info|debug` or use the dashboard Logs section.
 - Debugging tips: turn on `debug_logging` in the Settings UI to capture per-action traces. Use the dashboard Logs pane or `curl http://host:8080/api/logs?level=debug` to tail recent entries. Disable when not needed to reduce noise/IO.

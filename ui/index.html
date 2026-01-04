@@ -11,7 +11,10 @@
     <h1>GalleryLoom Dashboard</h1>
     <nav>
       <a href="/">Dashboard</a>
+      <a href="/galleries">Galleries</a>
+      <a href="/duplicates">Duplicates</a>
       <a href="/sources">Sources</a>
+      <a href="/logs">Logs</a>
       <a href="/settings">Settings</a>
     </nav>
   </header>
@@ -92,23 +95,6 @@
       <h2>Activity Log</h2>
       <div id="activity" class="log">Loading…</div>
     </section>
-
-    <section>
-      <h2>App Logs</h2>
-      <div class="flex">
-        <label>Log type
-          <select id="logLevel">
-            <option value="info">Base</option>
-            <option value="debug">Debug</option>
-          </select>
-        </label>
-        <label>Lines
-          <input type="number" id="logLines" value="200" min="10" max="1000" style="width:110px">
-        </label>
-        <button id="loadLogsBtn" class="secondary">Load Logs</button>
-      </div>
-      <pre id="logsView" class="log" style="white-space:pre-wrap;margin-top:10px;">Loading…</pre>
-    </section>
   </main>
 
   <script>
@@ -125,10 +111,6 @@
     const jobStatusEl = document.getElementById("jobStatus");
     const diffSummaryEl = document.getElementById("diffSummary");
     const diffBody = document.getElementById("diffBody");
-    const logLevelSel = document.getElementById("logLevel");
-    const logLinesInput = document.getElementById("logLines");
-    const loadLogsBtn = document.getElementById("loadLogsBtn");
-    const logsView = document.getElementById("logsView");
     let pollHandle = null;
     let lastResults = { dryrun: null, run: null };
     let diffResults = null;
@@ -185,7 +167,6 @@
     filterType.addEventListener("change", renderActions);
     filterDecision.addEventListener("change", renderActions);
     filterReason.addEventListener("change", renderActions);
-    loadLogsBtn.addEventListener("click", loadLogs);
 
     async function checkJob(jobId) {
       const res = await fetch(`/api/scan/jobs/${jobId}`);
@@ -296,19 +277,6 @@
       }).join("<br>");
     }
 
-    async function loadLogs() {
-      logsView.textContent = "Loading logs…";
-      const level = logLevelSel.value;
-      const lines = parseInt(logLinesInput.value || "200", 10);
-      const res = await fetch(`/api/logs?level=${encodeURIComponent(level)}&lines=${lines}`);
-      const data = await res.json();
-      if (!data.exists) {
-        logsView.textContent = `No ${level} log file yet.`;
-        return;
-      }
-      logsView.textContent = data.lines.join("\n");
-    }
-
     async function loadLastResults() {
       const res = await fetch("/api/scan/last");
       lastResults = await res.json();
@@ -317,7 +285,40 @@
 
     loadLastResults();
     loadActivity();
-    loadLogs();
+    (function setupStatusBar() {
+      const bar = document.createElement("div");
+      bar.className = "status-bar";
+      bar.innerHTML = `
+        <span id="statusState" class="badge">standby</span>
+        <small id="statusMessage">Idle</small>
+        <div class="progress"><span id="statusProgress"></span></div>
+        <small id="statusMeta"></small>
+      `;
+      document.body.appendChild(bar);
+      const stateEl = bar.querySelector("#statusState");
+      const msgEl = bar.querySelector("#statusMessage");
+      const progEl = bar.querySelector("#statusProgress");
+      const metaEl = bar.querySelector("#statusMeta");
+      async function refreshStatus() {
+        try {
+          const res = await fetch("/api/status/");
+          const data = await res.json();
+          const st = data.status || {};
+          stateEl.textContent = st.state || "unknown";
+          msgEl.textContent = st.message || "";
+          if (typeof st.progress === "number") {
+            progEl.style.width = `${Math.round(st.progress * 100)}%`;
+          } else {
+            progEl.style.width = "0%";
+          }
+          metaEl.textContent = `Queue ${data.queue_depth || 0} · Running ${data.running_jobs ? data.running_jobs.length : 0}`;
+        } catch (e) {
+          msgEl.textContent = "Status unavailable";
+        }
+      }
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+    })();
   </script>
 </body>
 </html>

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>GalleryLoom · Galleries</title>
+</head>
+<body>
+  <header>
+    <h1>GalleryLoom Galleries</h1>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/galleries">Galleries</a>
+      <a href="/duplicates">Duplicates</a>
+      <a href="/sources">Sources</a>
+      <a href="/logs">Logs</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+  <main>
+    <section>
+      <h2>Output Galleries</h2>
+      <div class="flex" style="gap:10px">
+        <button id="refreshOutput" class="secondary">Refresh</button>
+        <span class="muted" id="outputMeta"></span>
+      </div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>Path</th>
+              <th>Virtual</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Size</th>
+              <th>Modified</th>
+              <th>Last Seen</th>
+              <th>Preview</th>
+            </tr>
+          </thead>
+          <tbody id="outputBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Discovered Galleries (watched)</h2>
+      <p class="muted">Galleries detected under enabled sources using current settings. Refresh triggers a quick discovery pass.</p>
+      <div class="flex" style="gap:10px">
+        <button id="refreshDiscovered" class="secondary">Refresh</button>
+        <span class="muted" id="discoverMeta"></span>
+      </div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Relative Path</th>
+              <th>Images</th>
+              <th>Bytes</th>
+              <th>Newest mtime</th>
+              <th>Leaf</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="discoverBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Preview</h2>
+      <p class="muted">Click any output entry to preview its contents. For discovered galleries, use "Update/Zip" to regenerate output then preview the resulting archive.</p>
+      <div id="previewMeta" class="muted">Nothing selected.</div>
+      <pre id="previewBody" class="log" style="max-height:300px; white-space:pre-wrap;"></pre>
+    </section>
+
+    <section>
+      <h2>Import to Output</h2>
+      <p class="muted">Upload archives (.zip/.cbz) or other files directly into the output tree. Optional extraction will unpack ZIP/CBZ into a subfolder.</p>
+      <form id="importForm" enctype="multipart/form-data">
+        <div class="flex" style="gap:10px; align-items:flex-end;">
+          <div style="flex:1">
+            <label>Target subfolder under /output (optional)</label>
+            <input type="text" id="importSubdir" placeholder="Manga/NewSeries">
+          </div>
+          <div>
+            <label>File</label>
+            <input type="file" id="importFile" required>
+          </div>
+          <div style="align-self:center">
+            <label><input type="checkbox" id="importExtract"> Extract ZIP/CBZ</label>
+          </div>
+          <button type="submit" class="secondary">Upload</button>
+        </div>
+      </form>
+      <div id="importResult" class="muted" style="margin-top:8px"></div>
+    </section>
+
+    <section>
+      <h2>Exclusions</h2>
+      <p class="muted">Add relative paths under /data to skip them in future scans. Adding an exclusion also removes matching outputs.</p>
+      <form id="excludeForm">
+        <div class="flex" style="gap:10px; align-items:flex-end;">
+          <div style="flex:1">
+            <label>Relative path to exclude (under /data)</label>
+            <input type="text" id="excludePath" placeholder="Manga/SeriesA/BadChapter">
+          </div>
+          <button type="submit" class="secondary">Add Exclusion</button>
+        </div>
+      </form>
+      <div id="excludeResult" class="muted" style="margin-top:6px"></div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>Path</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="excludeBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const outputBody = document.getElementById("outputBody");
+    const outputMeta = document.getElementById("outputMeta");
+    const refreshOutput = document.getElementById("refreshOutput");
+
+    const discoverBody = document.getElementById("discoverBody");
+    const discoverMeta = document.getElementById("discoverMeta");
+    const refreshDiscovered = document.getElementById("refreshDiscovered");
+
+    const previewBody = document.getElementById("previewBody");
+    const previewMeta = document.getElementById("previewMeta");
+
+    const importForm = document.getElementById("importForm");
+    const importFile = document.getElementById("importFile");
+    const importSubdir = document.getElementById("importSubdir");
+    const importExtract = document.getElementById("importExtract");
+    const importResult = document.getElementById("importResult");
+
+    const excludeForm = document.getElementById("excludeForm");
+    const excludePath = document.getElementById("excludePath");
+    const excludeResult = document.getElementById("excludeResult");
+    const excludeBody = document.getElementById("excludeBody");
+
+    function formatBytes(bytes) {
+      if (bytes == null || isNaN(bytes)) return "";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+      }
+      return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function formatDate(val) {
+      if (!val) return "";
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? val : d.toLocaleString();
+    }
+
+    async function loadOutput() {
+      outputBody.innerHTML = "<tr><td colspan='8' class='muted'>Loading…</td></tr>";
+      const res = await fetch("/api/galleries/output");
+      const data = await res.json();
+      outputBody.innerHTML = "";
+      if (!data.length) {
+        outputBody.innerHTML = "<tr><td colspan='8' class='muted'>No gallery records yet.</td></tr>";
+        outputMeta.textContent = "";
+        return;
+      }
+      data.forEach(item => {
+        const tr = document.createElement("tr");
+        const status = item.exists ? '<span class="pill">exists</span>' : '<span class="muted">missing</span>';
+        tr.innerHTML = `
+          <td class="muted">${item.path}</td>
+          <td class="muted">${item.virtual_path || ""}</td>
+          <td>${item.record_type}</td>
+          <td>${status}</td>
+          <td>${item.size != null ? formatBytes(item.size) : ""}</td>
+          <td class="muted">${formatDate(item.mtime)}</td>
+          <td class="muted">${formatDate(item.last_seen_at)}</td>
+          <td><button class="ghost preview-btn" data-path="${item.path}">Preview</button></td>
+        `;
+        outputBody.appendChild(tr);
+      });
+      outputMeta.textContent = `Total: ${data.length} · Updated ${new Date().toLocaleTimeString()}`;
+    }
+
+    async function loadDiscovered() {
+      discoverBody.innerHTML = "<tr><td colspan='7' class='muted'>Scanning sources…</td></tr>";
+      const res = await fetch("/api/galleries/discovered");
+      const data = await res.json();
+      discoverBody.innerHTML = "";
+      if (!data.length) {
+        discoverBody.innerHTML = "<tr><td colspan='7' class='muted'>No galleries detected under enabled sources.</td></tr>";
+        discoverMeta.textContent = "";
+        return;
+      }
+      data.forEach(item => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${item.source_name}</td>
+          <td class="muted">${item.relative_path}</td>
+          <td>${item.image_count}</td>
+          <td>${formatBytes(item.total_image_bytes)}</td>
+          <td class="muted">${formatDate(item.newest_mtime * 1000)}</td>
+          <td>${item.is_leaf ? "yes" : "no"}</td>
+          <td><button class="secondary update-btn" data-rel="${item.relative_path}">Update/Zip</button></td>
+        `;
+        discoverBody.appendChild(tr);
+      });
+      discoverMeta.textContent = `Detected: ${data.length} · Updated ${new Date().toLocaleTimeString()}`;
+    }
+
+    async function loadPreview(path) {
+      previewMeta.textContent = `Loading preview for ${path}…`;
+      previewBody.textContent = "";
+      const params = new URLSearchParams({ path });
+      const res = await fetch(`/api/galleries/preview?${params.toString()}`);
+      const data = await res.json();
+      previewMeta.textContent = `${data.kind.toUpperCase()} · ${data.exists ? "exists" : "missing"} · ${data.size ? formatBytes(data.size) : ""} · ${formatDate(data.mtime)}`;
+      if (!data.exists) {
+        previewBody.textContent = "File not found.";
+        return;
+      }
+      if (!data.entries || !data.entries.length) {
+        previewBody.textContent = "No entries to show.";
+        return;
+      }
+      previewBody.textContent = data.entries.join("\n") + (data.truncated ? "\n... (truncated)" : "");
+    }
+
+    async function updateGallery(relativePath) {
+      const params = new URLSearchParams({ relative_path: relativePath });
+      const res = await fetch(`/api/galleries/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString()
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        alert("Update failed: " + text);
+        return;
+      }
+      const data = await res.json();
+      alert(`Updated: ${data.target_path}`);
+      loadOutput();
+    }
+
+    outputBody.addEventListener("click", (e) => {
+      const btn = e.target.closest(".preview-btn");
+      if (!btn) return;
+      const path = btn.getAttribute("data-path");
+      loadPreview(path);
+    });
+
+    discoverBody.addEventListener("click", (e) => {
+      const btn = e.target.closest(".update-btn");
+      if (!btn) return;
+      const rel = btn.getAttribute("data-rel");
+      updateGallery(rel);
+    });
+
+    importForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!importFile.files.length) return;
+      const formData = new FormData();
+      formData.append("file", importFile.files[0]);
+      formData.append("target_subdir", importSubdir.value || "");
+      formData.append("extract", importExtract.checked ? "true" : "false");
+      importResult.textContent = "Uploading…";
+      const res = await fetch("/api/galleries/import/upload", { method: "POST", body: formData });
+      if (!res.ok) {
+        const text = await res.text();
+        importResult.textContent = "Upload failed: " + text;
+        return;
+      }
+      const data = await res.json();
+      if (data.skipped) {
+        importResult.textContent = `Skipped: ${data.reason || "exists"}`;
+      } else if (data.extracted) {
+        importResult.textContent = `Uploaded to ${data.saved_path} and extracted to ${data.extract_path}`;
+      } else {
+        importResult.textContent = `Uploaded to ${data.saved_path}`;
+      }
+      importForm.reset();
+      loadOutput();
+    });
+
+    async function loadExclusions() {
+      excludeBody.innerHTML = "<tr><td colspan='3' class='muted'>Loading…</td></tr>";
+      const res = await fetch("/api/exclusions/");
+      const data = await res.json();
+      excludeBody.innerHTML = "";
+      if (!data.length) {
+        excludeBody.innerHTML = "<tr><td colspan='3' class='muted'>No exclusions.</td></tr>";
+        return;
+      }
+      data.forEach(item => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="muted">${item.path}</td>
+          <td class="muted">${formatDate(item.created_at)}</td>
+          <td><button class="danger remove-exclusion" data-id="${item.id}">Remove</button></td>
+        `;
+        excludeBody.appendChild(tr);
+      });
+    }
+
+    excludeForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const path = excludePath.value.trim();
+      if (!path) return;
+      excludeResult.textContent = "Saving…";
+      const res = await fetch("/api/exclusions/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path })
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        excludeResult.textContent = "Failed: " + text;
+        return;
+      }
+      const data = await res.json();
+      excludeResult.textContent = `Excluded ${data.exclusion.path}; removed ${data.removed} existing outputs`;
+      excludePath.value = "";
+      loadExclusions();
+      loadOutput();
+    });
+
+    excludeBody.addEventListener("click", async (e) => {
+      const btn = e.target.closest(".remove-exclusion");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      await fetch(`/api/exclusions/${id}`, { method: "DELETE" });
+      loadExclusions();
+    });
+
+    refreshOutput.addEventListener("click", () => loadOutput().catch(() => {}));
+    refreshDiscovered.addEventListener("click", () => loadDiscovered().catch(() => {}));
+
+    loadOutput();
+    loadDiscovered();
+    loadExclusions();
+    (function setupStatusBar() {
+      const bar = document.createElement("div");
+      bar.className = "status-bar";
+      bar.innerHTML = `
+        <span id="statusState" class="badge">standby</span>
+        <small id="statusMessage">Idle</small>
+        <div class="progress"><span id="statusProgress"></span></div>
+        <small id="statusMeta"></small>
+      `;
+      document.body.appendChild(bar);
+      const stateEl = bar.querySelector("#statusState");
+      const msgEl = bar.querySelector("#statusMessage");
+      const progEl = bar.querySelector("#statusProgress");
+      const metaEl = bar.querySelector("#statusMeta");
+      async function refreshStatus() {
+        try {
+          const res = await fetch("/api/status/");
+          const data = await res.json();
+          const st = data.status || {};
+          stateEl.textContent = st.state || "unknown";
+          msgEl.textContent = st.message || "";
+          if (typeof st.progress === "number") {
+            progEl.style.width = `${Math.round(st.progress * 100)}%`;
+          } else {
+            progEl.style.width = "0%";
+          }
+          metaEl.textContent = `Queue ${data.queue_depth || 0} · Running ${data.running_jobs ? data.running_jobs.length : 0}`;
+        } catch (e) {
+          msgEl.textContent = "Status unavailable";
+        }
+      }
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+    })();
+  </script>
+</body>
+</html>

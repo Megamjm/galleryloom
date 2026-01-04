@@ -11,7 +11,10 @@
     <h1>GalleryLoom Sources</h1>
     <nav>
       <a href="/">Dashboard</a>
+      <a href="/galleries">Galleries</a>
+      <a href="/duplicates">Duplicates</a>
       <a href="/sources">Sources</a>
+      <a href="/logs">Logs</a>
       <a href="/settings">Settings</a>
     </nav>
   </header>
@@ -293,6 +296,40 @@
     });
 
     loadSources();
+    (function setupStatusBar() {
+      const bar = document.createElement("div");
+      bar.className = "status-bar";
+      bar.innerHTML = `
+        <span id="statusState" class="badge">standby</span>
+        <small id="statusMessage">Idle</small>
+        <div class="progress"><span id="statusProgress"></span></div>
+        <small id="statusMeta"></small>
+      `;
+      document.body.appendChild(bar);
+      const stateEl = bar.querySelector("#statusState");
+      const msgEl = bar.querySelector("#statusMessage");
+      const progEl = bar.querySelector("#statusProgress");
+      const metaEl = bar.querySelector("#statusMeta");
+      async function refreshStatus() {
+        try {
+          const res = await fetch("/api/status/");
+          const data = await res.json();
+          const st = data.status || {};
+          stateEl.textContent = st.state || "unknown";
+          msgEl.textContent = st.message || "";
+          if (typeof st.progress === "number") {
+            progEl.style.width = `${Math.round(st.progress * 100)}%`;
+          } else {
+            progEl.style.width = "0%";
+          }
+          metaEl.textContent = `Queue ${data.queue_depth || 0} · Running ${data.running_jobs ? data.running_jobs.length : 0}`;
+        } catch (e) {
+          msgEl.textContent = "Status unavailable";
+        }
+      }
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+    })();
   </script>
 </body>
 </html>

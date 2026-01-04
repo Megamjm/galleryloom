@@ -7,6 +7,7 @@ body {
   margin: 0;
   background: #0d1117;
   color: #e6edf3;
+  padding-bottom: 70px; /* leave space for status bar */
 }
 
 header {
@@ -244,4 +245,60 @@ th {
 
 .dir-row:last-child {
   border-bottom: none;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: #2ea043;
+}
+
+.status-dot.paused {
+  background: #8b949e;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #30363d;
+  color: #e6edf3;
+  font-size: 12px;
+}
+
+.status-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #0d1117;
+  border-top: 1px solid #30363d;
+  padding: 8px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  z-index: 900;
+}
+
+.status-bar small {
+  color: #8b949e;
+}
+
+.status-bar .progress {
+  flex: 1;
+  height: 6px;
+  background: #161b22;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.status-bar .progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #2ea043, #1f6feb);
+  width: 0%;
+  transition: width 0.2s ease;
 }

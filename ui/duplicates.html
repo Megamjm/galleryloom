@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/styles.css">
+  <title>GalleryLoom · Duplicates</title>
+</head>
+<body>
+  <header>
+    <h1>GalleryLoom Duplicates</h1>
+    <nav>
+      <a href="/">Dashboard</a>
+      <a href="/galleries">Galleries</a>
+      <a href="/duplicates">Duplicates</a>
+      <a href="/sources">Sources</a>
+      <a href="/logs">Logs</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+  <main>
+    <section>
+      <h2>Duplicate Archives/Galleries</h2>
+      <p class="muted">Detected by matching stored signatures for gallery zips/foldercopies. Mark acknowledged to hide noise; keep an eye on missing files.</p>
+      <div class="flex" style="gap:10px">
+        <button id="refreshBtn" class="secondary">Refresh</button>
+        <button id="ackBtn" class="ghost" disabled>Mark selected as OK</button>
+        <span class="muted" id="meta"></span>
+      </div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Signature</th>
+              <th>Count</th>
+              <th>Status</th>
+              <th>Entries</th>
+            </tr>
+          </thead>
+          <tbody id="dupBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Suggestions</h2>
+      <p class="muted">Consider deleting stale/missing entries or keeping the newest modified file. Use acknowledged to silence groups you've reviewed.</p>
+    </section>
+  </main>
+
+  <script>
+    const refreshBtn = document.getElementById("refreshBtn");
+    const ackBtn = document.getElementById("ackBtn");
+    const dupBody = document.getElementById("dupBody");
+    const meta = document.getElementById("meta");
+    let data = [];
+
+    function formatDate(val) {
+      if (!val) return "";
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? val : d.toLocaleString();
+    }
+
+    function render() {
+      dupBody.innerHTML = "";
+      if (!data.length) {
+        dupBody.innerHTML = "<tr><td colspan='5' class='muted'>No duplicates detected.</td></tr>";
+        meta.textContent = "";
+        ackBtn.disabled = true;
+        return;
+      }
+      data.forEach(group => {
+        const tr = document.createElement("tr");
+        const entries = group.entries.map(e => {
+          const status = e.exists ? "<span class='pill'>exists</span>" : "<span class='muted'>missing</span>";
+          return `${status} ${e.path} (${e.record_type})`;
+        }).join("<br>");
+        const status = group.acknowledged ? "<span class='muted'>acknowledged</span>" : "<span class='pill'>new</span>";
+        tr.innerHTML = `
+          <td><input type="checkbox" class="sel" data-key="${group.signature_key}" ${group.acknowledged ? "" : "checked"}></td>
+          <td class="muted" style="max-width:260px; word-break:break-word;">${group.signature_key}</td>
+          <td>${group.count}</td>
+          <td>${status}</td>
+          <td class="muted" style="max-width:480px; word-break:break-word;">${entries}</td>
+        `;
+        dupBody.appendChild(tr);
+      });
+      meta.textContent = `Groups: ${data.length} · Updated ${new Date().toLocaleTimeString()}`;
+      ackBtn.disabled = !data.some(g => !g.acknowledged);
+    }
+
+    async function loadDuplicates() {
+      dupBody.innerHTML = "<tr><td colspan='5' class='muted'>Loading…</td></tr>";
+      const res = await fetch("/api/galleries/duplicates");
+      data = await res.json();
+      render();
+    }
+
+    async function ackSelected() {
+      const keys = Array.from(document.querySelectorAll(".sel:checked")).map(el => el.getAttribute("data-key"));
+      if (!keys.length) return;
+      await fetch("/api/galleries/duplicates/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(keys)
+      });
+      await loadDuplicates();
+    }
+
+    refreshBtn.addEventListener("click", () => loadDuplicates().catch(() => {}));
+    ackBtn.addEventListener("click", () => ackSelected().catch(() => {}));
+
+    loadDuplicates();
+    (function setupStatusBar() {
+      const bar = document.createElement("div");
+      bar.className = "status-bar";
+      bar.innerHTML = `
+        <span id="statusState" class="badge">standby</span>
+        <small id="statusMessage">Idle</small>
+        <div class="progress"><span id="statusProgress"></span></div>
+        <small id="statusMeta"></small>
+      `;
+      document.body.appendChild(bar);
+      const stateEl = bar.querySelector("#statusState");
+      const msgEl = bar.querySelector("#statusMessage");
+      const progEl = bar.querySelector("#statusProgress");
+      const metaEl = bar.querySelector("#statusMeta");
+      async function refreshStatus() {
+        try {
+          const res = await fetch("/api/status/");
+          const data = await res.json();
+          const st = data.status || {};
+          stateEl.textContent = st.state || "unknown";
+          msgEl.textContent = st.message || "";
+          if (typeof st.progress === "number") {
+            progEl.style.width = `${Math.round(st.progress * 100)}%`;
+          } else {
+            progEl.style.width = "0%";
+          }
+          metaEl.textContent = `Queue ${data.queue_depth || 0} · Running ${data.running_jobs ? data.running_jobs.length : 0}`;
+        } catch (e) {
+          msgEl.textContent = "Status unavailable";
+        }
+      }
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+    })();
+  </script>
+</body>
+</html>

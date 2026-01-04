@@ -59,3 +59,10 @@ class Activity(Base):
     level: Mapped[str] = mapped_column(String(20), default="INFO")
     message: Mapped[str] = mapped_column(Text)
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class Exclusion(Base):
+    __tablename__ = "exclusions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    path: Mapped[str] = mapped_column(Text, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
